@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { api, type BillingSession } from "../api"
-import { EXPLORE_PRODUCTS, PRODUCT_SWITCHER } from "../nav"
+import { EXPLORE_PRODUCTS, PRODUCT_SWITCHER, isImplemented } from "../nav"
 
 export function Header({
   session,
-  onOpenAi,
   onOpenDeviceMap,
   onSignOut,
 }: {
   session: BillingSession
-  onOpenAi: () => void
   onOpenDeviceMap: () => void
   onSignOut: () => void
 }) {
@@ -44,7 +42,7 @@ export function Header({
         </button>
         {switcherOpen && (
           <div className="dropdown-menu show mt-2" style={{ display: "block", minWidth: 220 }}>
-            {PRODUCT_SWITCHER.map((item) => (
+            {PRODUCT_SWITCHER.filter((item) => isImplemented(item.path)).map((item) => (
               <Link key={item.path} className="dropdown-item" to={item.path} onClick={() => setSwitcherOpen(false)}>
                 {item.label}
               </Link>
@@ -67,10 +65,15 @@ export function Header({
           </button>
           {exploreOpen && (
             <div className="mega-menu">
-              {(Object.keys(EXPLORE_PRODUCTS) as (keyof typeof EXPLORE_PRODUCTS)[]).map((section) => (
+              {(Object.keys(EXPLORE_PRODUCTS) as (keyof typeof EXPLORE_PRODUCTS)[])
+                .map((section) => ({ section, items: EXPLORE_PRODUCTS[section].filter((item) => isImplemented(item.path)) }))
+                .filter((section) => section.items.length > 0)
+                .map(({ section, items }) => (
                 <div key={section}>
                   <h6>{section}</h6>
-                  {EXPLORE_PRODUCTS[section].map((item) => (
+                  {items.map((item) => {
+                    const description = "desc" in item && typeof item.desc === "string" ? item.desc : ""
+                    return (
                     <Link
                       key={item.path}
                       className="mega-item"
@@ -78,17 +81,15 @@ export function Header({
                       onClick={() => setExploreOpen(false)}
                     >
                       <strong>{item.label}</strong>
-                      {"desc" in item && item.desc ? <small>{item.desc}</small> : null}
+                      {description ? <small>{description}</small> : null}
                     </Link>
-                  ))}
+                    )
+                  })}
                 </div>
               ))}
             </div>
           )}
         </div>
-        <button type="button" className="btn-explore" onClick={onOpenAi}>
-          <i className="bi bi-stars" /> AI Agent
-        </button>
         <div className="dropdown">
           <button type="button" className="avatar-btn" onClick={() => setProfileOpen((v) => !v)}>
             {initial}
@@ -101,12 +102,6 @@ export function Header({
               <Link className="dropdown-item" to="/users/apps" onClick={() => setProfileOpen(false)}>
                 Apps
                 <div className="small text-muted">Version - {session.appVersion}</div>
-              </Link>
-              <Link className="dropdown-item" to="/users/terms" onClick={() => setProfileOpen(false)}>
-                Terms & Conditions
-              </Link>
-              <Link className="dropdown-item" to="/users/privacy" onClick={() => setProfileOpen(false)}>
-                Privacy Policy
               </Link>
               <button type="button" className="dropdown-item" onClick={onSignOut}>
                 Logout

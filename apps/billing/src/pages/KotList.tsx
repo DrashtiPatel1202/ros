@@ -30,27 +30,39 @@ export function KotList() {
   const [tableNo, setTableNo] = useState("")
   const [customer, setCustomer] = useState("")
   const [rows, setRows] = useState<PosKot[]>([])
-  const [openId, setOpenId] = useState<number | null>(null)
+  const [openIds, setOpenIds] = useState<Set<number>>(new Set())
   const [error, setError] = useState("")
-  const [showAll, setShowAll] = useState(false)
+  const [showingAll, setShowingAll] = useState(false)
 
-  async function load(all = showAll) {
+  async function load(query: {
+    from: string
+    to: string
+    orderType: string
+    status: string
+    modified: string
+    kotId: string
+    tableNo: string
+    customer: string
+    all: boolean
+  }) {
     const data = await api.posKots({
-      from: all ? "" : from,
-      to: all ? "" : to,
-      orderType,
-      status,
-      modified,
-      kotId,
-      tableNo,
-      customer,
-      all: all ? "1" : "",
+      from: query.all ? "" : query.from,
+      to: query.all ? "" : query.to,
+      orderType: query.orderType,
+      status: query.status,
+      modified: query.modified,
+      kotId: query.kotId,
+      tableNo: query.tableNo,
+      customer: query.customer,
+      all: query.all ? "1" : "",
     })
     setRows(data.kots)
+    setShowingAll(query.all)
+    setOpenIds(new Set())
   }
 
   useEffect(() => {
-    void load(false).catch((caught) => setError(caught instanceof ApiError ? caught.message : "Could not load KOTs"))
+    void load({ from, to, orderType: "all", status: "all", modified: "all", kotId: "", tableNo: "", customer: "", all: false }).catch((caught) => setError(caught instanceof ApiError ? caught.message : "Could not load KOTs"))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -91,12 +103,12 @@ export function KotList() {
         </button>
       </div>
       {error && <p className="text-danger">{error}</p>}
+      {showingAll && !error && <p className="text-muted">Showing every KOT, {rows.length} in total.</p>}
       <form
         className="card-pp mb-3"
         onSubmit={(e) => {
           e.preventDefault()
-          setShowAll(false)
-          void load(false).catch((caught) => setError(caught instanceof ApiError ? caught.message : "Could not search"))
+          void load({ from, to, orderType, status, modified, kotId, tableNo, customer, all: false }).catch((caught) => setError(caught instanceof ApiError ? caught.message : "Could not search"))
         }}
       >
         <div className="row g-2">
@@ -135,19 +147,28 @@ export function KotList() {
               className="btn btn-outline-secondary w-100"
               type="button"
               onClick={() => {
-                setFrom(today())
-                setTo(today())
+                setFrom("")
+                setTo("")
                 setOrderType("all")
                 setStatus("all")
                 setModified("all")
                 setKotId("")
                 setTableNo("")
                 setCustomer("")
-                setShowAll(true)
-                void load(true).catch((caught) => setError(caught instanceof ApiError ? caught.message : "Could not load"))
+                void load({ from: "", to: "", orderType: "all", status: "all", modified: "all", kotId: "", tableNo: "", customer: "", all: true }).catch((caught) => setError(caught instanceof ApiError ? caught.message : "Could not load"))
               }}
             >
               Show all
+            </button>
+          </div>
+          <div className="col-md-2">
+            <button
+              className="btn btn-outline-primary w-100"
+              type="button"
+              disabled={rows.length === 0}
+              onClick={() => setOpenIds(openIds.size === rows.length ? new Set() : new Set(rows.map((row) => row.id)))}
+            >
+              {openIds.size === rows.length && rows.length > 0 ? "Hide items" : "View all"}
             </button>
           </div>
         </div>
@@ -163,15 +184,16 @@ export function KotList() {
               <th>Customer</th>
               <th>Status</th>
               <th>Bill</th>
+              <th />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={7} className="text-muted">No KOTs for this search.</td></tr>
+              <tr><td colSpan={8} className="text-muted">No KOTs for this search.</td></tr>
             )}
             {rows.map((row) => (
               <Fragment key={row.id}>
-                <tr onClick={() => setOpenId(openId === row.id ? null : row.id)} style={{ cursor: "pointer" }}>
+                <tr>
                   <td>
                     <strong>{row.kotNo}</strong>
                     {row.modified && <span className="badge text-bg-warning ms-2">Modified</span>}
@@ -182,21 +204,35 @@ export function KotList() {
                   <td>{row.customerName || row.customerPhone || "—"}</td>
                   <td>{STATUS[row.status]}</td>
                   <td>
-                    <Link to={`/orders/order_list?invoice=${row.orderNo}`} onClick={(e) => e.stopPropagation()}>
-                      #{row.orderNo}
-                    </Link>
+                    <Link to={`/orders/order_list?invoice=${row.orderNo}`}>#{row.orderNo}</Link>
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-link"
+                      onClick={() => setOpenIds((current) => {
+                        const next = new Set(current)
+                        if (next.has(row.id)) next.delete(row.id)
+                        else next.add(row.id)
+                        return next
+                      })}
+                    >
+                      {openIds.has(row.id) ? "Hide" : "View"}
+                    </button>
                   </td>
                 </tr>
-                {openId === row.id && (
-                  <tr>
-                    <td colSpan={7}>
+                {openIds.has(row.id) && (
+                  <tr className="kot-detail">
+                    <td colSpan={8}>
                       {row.items.length === 0 && <span className="text-muted">No items on this KOT.</span>}
+                      <div className="kot-items">
                       {row.items.map((item, index) => (
                         <div key={`${item.name}-${index}`}>
                           {item.qty} × {item.name}
                           {item.note ? <small className="text-muted"> — {item.note}</small> : null}
                         </div>
                       ))}
+                      </div>
                     </td>
                   </tr>
                 )}

@@ -917,6 +917,8 @@ a:hover { text-decoration: underline; }
   font-weight: 700; background: #f8f9fb;
 }
 .card-pp .table td { vertical-align: middle; }
+.kot-detail td { background: #f4f7fb; }
+.kot-detail .kot-items { display: flex; flex-direction: column; gap: 4px; padding: 4px 4px 4px 28px; }
 .menu-workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 16px; align-items: start; }
 .menu-rail {
   background: #fff; border: 1px solid var(--pp-border); border-radius: 12px; overflow: hidden;

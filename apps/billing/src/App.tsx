@@ -21,62 +21,9 @@ import { PosBilling } from "./pos/PosBilling"
 import { AppShell } from "./shell/AppShell"
 import { DayEnd, DeliveryManagement, OnlineOrders } from "./pages/Operations"
 import { PlaceholderPage } from "./shell/PlaceholderPage"
-import { APP_NAME, SIDEBAR, isSubGroup, titleForPath } from "./nav"
+import { APP_NAME, IMPLEMENTED_PATHS, SIDEBAR, isSubGroup, titleForPath } from "./nav"
 
-const IMPLEMENTED = new Set([
-  "/users/dashboard",
-  "/users/edit_profile",
-  "/orders/running_orders",
-  "/orders/order_list",
-  "/pos/billing",
-  "/users/desktop",
-  "/users/res_new/1",
-  "/items/sub_order_type_list",
-  "/items/delivery_distance_list",
-  "/users/area_wise_delivery_charge_list",
-  "/users/floor_plan",
-  "/items/kot_list",
-  "/menus/menu_management",
-  "/menus/menu_new/all",
-  "/onlines/online_dashboard",
-  "/orders/day_end_summary",
-  "/orders/delivery_services_list",
-  "/menus/item_on_off",
-  "/inventory_dashboard/new_inventory_dashboard",
-  "/inventories/rm_list/all",
-  "/inventories/new_item_stock_list",
-  "/inventories/purchase_list",
-  "/inventories/purchase_order_list",
-  "/inventories/wastage_list",
-  "/inventories/new_manual_stock",
-  "/inventories/inv_recipe_list",
-  "/inventories/supplier_management",
-  "/inventories/inventoy_setting",
-  "/users/desktop_application",
-  "/users/apps",
-  "/users/logs_redirect",
-  "/orders/reconcilation_list",
-  "/users/virtual_wallet_list",
-  "/onlines/reconciliation_list_new",
-  "/users/gst_information",
-  "/orders/bank_detail_listing",
-  "/items/expense_list",
-  "/orders/invoice_credit_service_list",
-  "/orders/loan_invoice_list",
-  "/items/denomination_list",
-  "/logs/online_log_status/1",
-  "/logs/online_log_status/2",
-  "/logs/auto_accept_log_status",
-  "/logs/support_note_list",
-  "/logs/notifications_list",
-  "/settings/zomato_menu_callbacks",
-  "/logs/closing_hours_logs",
-  "/logs/expense_logs",
-  "/logs/withdrawl_logs",
-  "/logs/cashtopup_logs",
-  "/market/services",
-  "/market/settings",
-])
+const IMPLEMENTED = IMPLEMENTED_PATHS
 
 function collectPaths(): string[] {
   const paths = new Set<string>([

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import {
   ApiError,
   api,
@@ -30,7 +31,8 @@ export function AllOrders() {
   const [status, setStatus] = useState("all")
   const [orderType, setOrderType] = useState("all")
   const [paymentType, setPaymentType] = useState("all")
-  const [invoiceId, setInvoiceId] = useState("")
+  const [params] = useSearchParams()
+  const [invoiceId, setInvoiceId] = useState(params.get("invoice") ?? "")
   const [customer, setCustomer] = useState("")
   const [selected, setSelected] = useState<PosOrder | null>(null)
   const [detailLines, setDetailLines] = useState<{ name: string; qty: number; lineTotalPaise: number; note: string | null }[]>([])
@@ -58,6 +60,13 @@ export function AllOrders() {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const invoice = params.get("invoice")
+    if (!invoice || loading) return
+    const match = orders.find((order) => String(order.orderNo) === invoice)
+    if (match) void openDetail(match)
+  }, [orders, loading, params])
 
   async function openDetail(order: PosOrder) {
     setSelected(order)

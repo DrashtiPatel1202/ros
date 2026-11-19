@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useLocation } from "react-router-dom"
-import { APP_NAME, SIDEBAR, isSubGroup, type NavLeaf, type NavSubGroup } from "../nav"
+import { APP_NAME, SIDEBAR, isImplemented, isSubGroup, type NavGroup, type NavLeaf, type NavSubGroup } from "../nav"
 
 const ICONS: Record<string, string> = {
   dashboard: "bi-speedometer2",
@@ -46,6 +46,23 @@ function iconFor(id: string) {
   return ICONS[id] ?? "bi-dot"
 }
 
+function visibleGroups(groups: NavGroup[]): NavGroup[] {
+  const result: NavGroup[] = []
+  for (const group of groups) {
+    const children: NavGroup["children"] = []
+    for (const child of group.children) {
+      if (isSubGroup(child)) {
+        const leaves = child.children.filter((leaf) => isImplemented(leaf.path))
+        if (leaves.length) children.push({ ...child, children: leaves })
+      } else if (isImplemented(child.path)) {
+        children.push(child)
+      }
+    }
+    if (children.length) result.push({ ...group, children })
+  }
+  return result
+}
+
 function matches(leafPath: string, path: string) {
   if (leafPath === path) return true
   if (leafPath === "/menus/menu_management" && path.startsWith("/menus/")) return true
@@ -67,11 +84,12 @@ function matches(leafPath: string, path: string) {
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation()
   const path = location.pathname.replace(/\/$/, "") || "/"
+  const groups = useMemo(() => visibleGroups(SIDEBAR), [])
   const [open, setOpen] = useState<Record<string, boolean>>({ daily: true })
 
   const activeBranch = useMemo(() => {
     const branch = { group: "", sub: "", leaf: "" }
-    for (const group of SIDEBAR) {
+    for (const group of groups) {
       for (const child of group.children) {
         if (isSubGroup(child)) {
           for (const leaf of child.children) {
@@ -89,7 +107,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     }
     if (!branch.leaf && path === "/users/dashboard") branch.leaf = "dashboard"
     return branch
-  }, [path])
+  }, [path, groups])
 
   useEffect(() => {
     setOpen((current) => ({
@@ -112,7 +130,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
         </button>
       </div>
       <div className="sidebar-scroll">
-        {SIDEBAR.map((group) => {
+        {groups.map((group) => {
           const expanded = !group.collapsible || collapsed || (open[group.id] ?? false)
           return (
             <div key={group.id}>
@@ -145,12 +163,6 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
           )
         })}
       </div>
-      {!collapsed && (
-        <div className="quick-links-foot">
-          <span>Quick Links</span>
-          <Link to="/users/add_quick_links">+ add</Link>
-        </div>
-      )}
     </aside>
   )
 }

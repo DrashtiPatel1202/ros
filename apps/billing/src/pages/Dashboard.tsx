@@ -21,7 +21,6 @@ export function Dashboard() {
   const [actionOpen, setActionOpen] = useState(false)
   const [fssaiOpen, setFssaiOpen] = useState(false)
   const [fssai, setFssai] = useState("")
-  const [snapshotSkipped, setSnapshotSkipped] = useState(false)
   const [itemMode, setItemMode] = useState<"top" | "low">("top")
 
   async function load() {
@@ -64,23 +63,6 @@ export function Dashboard() {
 
   return (
     <div className="dashboard-page">
-      {data?.snapshotReady && !snapshotSkipped && (
-        <div className="snapshot-banner">
-          <div>
-            <div className="fw-semibold">Your Daily Snapshot is ready</div>
-            <div className="text-muted small">
-              {data.snapshotDate} — yesterday&apos;s performance across sales, orders, customers &amp; loyalty
-            </div>
-          </div>
-          <button type="button" className="btn btn-primary btn-sm ms-auto">
-            Open snapshot
-          </button>
-          <button type="button" className="btn btn-link btn-sm" onClick={() => setSnapshotSkipped(true)}>
-            Skip
-          </button>
-        </div>
-      )}
-
       <div className="sync-row">
         {data && (
           <>
@@ -262,59 +244,23 @@ export function Dashboard() {
 
         <div className="pp-card upsell-card">
           <h4>Risk Radar</h4>
-          <p>
+          <p className="mb-0">
             Unverified payments {formatInr(data?.risk.unverifiedPaise ?? 0)}. Checks: payment matched to bill, billed =
             collected, every bill has payment.
           </p>
-          <a className="btn btn-sm btn-outline-primary" href="/users/finance_redirect">
-            Explore Risk Analysis
-          </a>
-        </div>
-
-        <div className="pp-card upsell-card">
-          <h4>Staff Cost vs Sales</h4>
-          <p>Connect Attendo to see staff cost against sales, on-time % and overtime.</p>
-          <button type="button" className="btn btn-sm btn-outline-primary me-2">
-            Already Using
-          </button>
-          <a className="btn btn-sm btn-link" href="/users/attendo_staff_cost_breakdown">
-            See Sample Report
-          </a>
         </div>
 
         <div className="pp-card upsell-card">
           <h4>Expense Drain</h4>
-          <p>
+          <p className="mb-0">
             Expense {formatInr(data?.expenses.expensePaise ?? 0)} · Withdrawal{" "}
             {formatInr(data?.expenses.withdrawalPaise ?? 0)} · Top-up {formatInr(data?.expenses.topupPaise ?? 0)}
           </p>
-          <button type="button" className="btn btn-sm btn-outline-primary">
-            Explore KharchaPay
-          </button>
         </div>
 
         <div className="pp-card upsell-card">
           <h4>Sales Performance · Retention</h4>
-          <p>Repeat-customer rate {data?.retentionPct ?? 0}%.</p>
-          <a className="btn btn-sm btn-outline-primary" href="/users/marketing_redirect">
-            Explore Marketing Manager
-          </a>
-        </div>
-
-        <div className="pp-card upsell-card">
-          <h4>Item margin vs city benchmark</h4>
-          <p>Turn on Inventory to see your actual food cost.</p>
-          <a className="btn btn-sm btn-outline-primary" href="/inventory_dashboard/new_inventory_dashboard">
-            Turn on Inventory
-          </a>
-        </div>
-
-        <div className="pp-card upsell-card">
-          <h4>Quick Help</h4>
-          <p>Support hours 10 AM–7 PM</p>
-          <a className="btn btn-sm btn-success" href="https://wa.me/916357238463" target="_blank" rel="noreferrer">
-            WhatsApp
-          </a>
+          <p className="mb-0">Repeat-customer rate {data?.retentionPct ?? 0}%.</p>
         </div>
       </div>
 
