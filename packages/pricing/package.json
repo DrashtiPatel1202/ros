@@ -1,0 +1,10 @@
+{
+  "name": "@rea/pricing",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/index.test.ts"
+  }
+}
