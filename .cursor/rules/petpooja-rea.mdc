@@ -1,0 +1,13 @@
+---
+description: When building a feature to match Petpooja POSS, reverse engineer it from the local morluto/rea checkout. Never commit that checkout.
+alwaysApply: true
+---
+
+# Petpooja POSS reverse engineering
+
+When the user asks to build or match a feature the same way as Petpooja POSS, read the local checkout of https://github.com/morluto/rea at `rea/` before implementing. Use its captured routes, session notes, JavaScript route inventory, and agent-environment specs to see how that screen behaves. Product notes stay in `docs/petpooja-billing/` and `docs/petpooja-clone/`.
+
+- Checkout path: `rea/` (a local clone of `https://github.com/morluto/rea`).
+- Do not `git add` `rea/`, do not commit it, and do not remove `rea/` from `.gitignore`.
+- Source Control hides this nested checkout with `git.ignoredRepositories` in `.vscode/settings.json`. Leave that setting in place.
+- If `rea/` is missing, restore it with `git clone --depth 1 https://github.com/morluto/rea.git rea` and leave it untracked.
