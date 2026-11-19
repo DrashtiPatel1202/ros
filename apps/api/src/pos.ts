@@ -92,6 +92,55 @@ function coverLetter(tableNo: string, label: string) {
   return /^[A-Z]$/.test(letter) ? letter : null
 }
 
+type SqlClient = { query: (text: string, values?: unknown[]) => Promise<{ rows: any[]; rowCount: number | null }> }
+
+/** One physical table holds many open bills, named 1A, 1B, 1C. A bare table number takes the next free letter. */
+async function claimGuestLabel(
+  client: SqlClient,
+  outletId: number,
+  requested: string | undefined,
+  exceptOrderId?: number,
+): Promise<string | null> {
+  const label = requested?.trim()
+  if (!label) return null
+  const tables = await client.query<{ table_no: string }>(
+    "SELECT table_no FROM pos_tables WHERE outlet_id = $1 AND is_active",
+    [outletId],
+  )
+  const tableNo = tables.rows
+    .map((row) => row.table_no)
+    .sort((a, b) => b.length - a.length)
+    .find((no) => label === no || coverLetter(no, label))
+  if (!tableNo) return label
+
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`${outletId}:table:${tableNo}`])
+  const open = await client.query<{ id: string; table_label: string }>(
+    `SELECT id, table_label FROM orders
+     WHERE outlet_id = $1 AND status IN ('saved', 'printed') AND table_label IS NOT NULL`,
+    [outletId],
+  )
+  const used = new Set(
+    open.rows
+      .filter((row) => Number(row.id) !== exceptOrderId)
+      .map((row) => coverLetter(tableNo, row.table_label))
+      .filter((letter): letter is string => Boolean(letter)),
+  )
+  const requestedLetter = coverLetter(tableNo, label)
+  if (requestedLetter) {
+    if (used.has(requestedLetter)) {
+      throw Object.assign(new Error(`Guest ${requestedLetter} already has an open order on table ${tableNo}`), {
+        code: "SEAT_TAKEN",
+      })
+    }
+    return `${tableNo}${requestedLetter}`
+  }
+  for (let index = 0; index < 26; index += 1) {
+    const letter = String.fromCharCode(65 + index)
+    if (!used.has(letter)) return `${tableNo}${letter}`
+  }
+  throw Object.assign(new Error("This table already has a guest for every letter"), { code: "TABLE_FULL" })
+}
+
 export async function ensurePosSchema() {
   const sqlPath = join(dirname(fileURLToPath(import.meta.url)), "../sql/002_pos.sql")
   await pool.query(readFileSync(sqlPath, "utf8"))
@@ -429,8 +478,9 @@ export async function registerPosRoutes(app: FastifyInstance) {
       order_no: number
       status: string
       total_paise: number
+      customer_name: string | null
     }>(
-      `SELECT DISTINCT ON (table_label) table_label, id, order_no, status, total_paise
+      `SELECT DISTINCT ON (table_label) table_label, id, order_no, status, total_paise, customer_name
        FROM orders
        WHERE outlet_id = $1 AND status IN ('saved','printed') AND table_label IS NOT NULL
        ORDER BY table_label, updated_at DESC`,
@@ -521,20 +571,26 @@ export async function registerPosRoutes(app: FastifyInstance) {
               orderNo: Number(order.order_no),
               status: order.status,
               totalPaise: Number(order.total_paise),
+              customerName: order.customer_name,
             }
           })
           .filter((cover): cover is NonNullable<typeof cover> => cover !== null)
           .sort((a, b) => a.letter.localeCompare(b.letter))
+        const guestRunning = covers.some((cover) => cover.status !== "printed")
         return {
           id: Number(t.id),
           area: t.area_name,
           tableNo: t.table_no,
           seats: t.seats,
-          occupied: Boolean(running),
+          occupied: covers.length > 0 || Boolean(running),
           orderId: running ? Number(running.id) : null,
           orderNo: running ? Number(running.order_no) : null,
-          status: running ? running.status : null,
-          totalPaise: running ? Number(running.total_paise) : null,
+          status: covers.length === 0 ? (running ? running.status : null) : guestRunning ? "saved" : "printed",
+          totalPaise: covers.length
+            ? covers.reduce((sum, cover) => sum + cover.totalPaise, 0)
+            : running
+              ? Number(running.total_paise)
+              : null,
           x: t.pos_x,
           y: t.pos_y,
           width: t.width,
@@ -636,6 +692,15 @@ export async function registerPosRoutes(app: FastifyInstance) {
         printedAt = printedAt ?? settledAt
       }
 
+      const tableLabel =
+        parsed.data.orderType === "dine_in"
+          ? await claimGuestLabel(client, session.outletId, parsed.data.tableLabel)
+          : parsed.data.tableLabel?.trim() || null
+      const guestLetter = tableLabel?.slice(-1) ?? ""
+      const customerName =
+        parsed.data.customerName?.trim() ||
+        (tableLabel && tableLabel.length > 1 && /^[A-Z]$/.test(guestLetter) ? `Guest ${guestLetter}` : null)
+
       const orderNo = await nextOrderNo(client, session.outletId, businessDate)
       const inserted = await client.query(
         `INSERT INTO orders (
@@ -651,8 +716,8 @@ export async function registerPosRoutes(app: FastifyInstance) {
           businessDate,
           parsed.data.orderType,
           status,
-          parsed.data.tableLabel?.trim() || null,
-          parsed.data.customerName?.trim() || null,
+          tableLabel,
+          customerName,
           parsed.data.customerPhone?.trim() || null,
           parsed.data.pax ?? 1,
           parsed.data.note?.trim() || null,
@@ -695,6 +760,9 @@ export async function registerPosRoutes(app: FastifyInstance) {
       if (code === "ITEM_UNAVAILABLE") return sendError(reply, 409, code, "One of those dishes is no longer available")
       if (code === "TABLE_REQUIRED") return sendError(reply, 400, code, "Select a table for dine-in")
       if (code === "UNDERPAID") return sendError(reply, 400, code, "Paid amount is less than bill total")
+      if (code === "SEAT_TAKEN" || code === "TABLE_FULL") {
+        return sendError(reply, 409, code, error instanceof Error ? error.message : "That seat is already open")
+      }
       throw error
     } finally {
       client.release()
@@ -995,22 +1063,23 @@ export async function registerPosRoutes(app: FastifyInstance) {
         await client.query("ROLLBACK")
         return sendError(reply, 409, "VERSION_CONFLICT", "Order was updated elsewhere. Reload it.")
       }
-      const taken = await client.query(
-        `SELECT id FROM orders
-         WHERE outlet_id=$1 AND status IN ('saved','printed') AND table_label=$2 AND id<>$3
-         LIMIT 1`,
-        [session.outletId, parsed.data.tableLabel, orderId],
-      )
-      if (taken.rowCount) {
+      let nextLabel: string | null
+      try {
+        nextLabel = await claimGuestLabel(client, session.outletId, parsed.data.tableLabel, orderId)
+      } catch (error) {
         await client.query("ROLLBACK")
-        return sendError(reply, 409, "TABLE_BUSY", "That table already has a running order")
+        const code = error && typeof error === "object" && "code" in error ? String((error as { code: string }).code) : ""
+        if (code === "SEAT_TAKEN" || code === "TABLE_FULL") {
+          return sendError(reply, 409, code, error instanceof Error ? error.message : "That seat is already open")
+        }
+        throw error
       }
       const updated = await client.query(
         `UPDATE orders
          SET table_label=$3, order_type='dine_in', version=version+1, updated_at=now()
          WHERE id=$1 AND outlet_id=$2
          RETURNING *`,
-        [orderId, session.outletId, parsed.data.tableLabel],
+        [orderId, session.outletId, nextLabel],
       )
       await client.query(
         `UPDATE kots SET status='shifted' WHERE order_id=$1 AND status='active'`,

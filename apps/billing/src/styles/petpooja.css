@@ -566,6 +566,7 @@ a:hover { text-decoration: underline; }
 }
 .poss-areas button.on { background: #16324f; color: #fff; border-color: #16324f; }
 .poss-legend { margin-left: auto; color: #607086; font-size: 12px; }
+.poss-guest-hint { flex-basis: 100%; margin: 0; color: #607086; font-size: 13px; }
 .poss-legend .dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 4px; }
 .dot.free { background: #fff; border: 1px solid #b7c2d0; }
 .dot.running { background: #f5a623; }
@@ -587,7 +588,7 @@ a:hover { text-decoration: underline; }
 .kot-status.shifted { background: #e8f6f3; color: #00897b; }
 .kot-status.cancelled { background: #fdecea; color: #c62828; }
 .kot-status.settled { background: #e8f6ee; color: #146c43; }
-.poss-floor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 12px; }
+.poss-floor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 12px; }
 .floor-table {
   min-height: 104px; border-radius: 10px; border: 1px solid #d5dbe3; background: #fff;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
@@ -604,11 +605,12 @@ a:hover { text-decoration: underline; }
   border: 0; background: transparent; width: 100%;
   display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 14px 8px 8px;
 }
-.floor-covers { display: flex; gap: 4px; justify-content: center; padding: 0 6px 8px; }
+.floor-covers { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; padding: 0 6px 8px; }
 .floor-covers button {
   min-width: 26px; height: 26px; border-radius: 6px; border: 1px solid #d5dbe3;
   background: #fff; font-weight: 700; font-size: 12px;
 }
+.floor-covers button.free { background: #f4f7fb; color: #16324f; border-style: dashed; }
 .floor-covers button.running { background: #fff6e8; border-color: #f5a623; }
 .floor-covers button.printed { background: #e8f1fd; border-color: #1372e8; color: #1372e8; }
 .floor-covers button.add { color: #2f6fed; }

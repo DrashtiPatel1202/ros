@@ -731,7 +731,15 @@ export type PosBootstrap = {
     shape: string
     textSize: number
     placed: boolean
-    covers: { letter: string; label: string; orderId: number; orderNo: number; status: string; totalPaise: number }[]
+    covers: {
+      letter: string
+      label: string
+      orderId: number
+      orderNo: number
+      status: string
+      totalPaise: number
+      customerName: string | null
+    }[]
   }[]
   barriers: { id: number; x: number; y: number; width: number; height: number }[]
   discounts: {
@@ -862,6 +870,14 @@ export const PAYMENT_LABEL: Record<PosPaymentType, string> = {
   wallet: "Wallet",
   online: "Online",
   part: "Part",
+}
+
+/** "1A" is guest A on table 1. A label with no letter stays as the table name. */
+export function formatTableSeat(label: string): string {
+  const letter = label.slice(-1)
+  const tableNo = label.slice(0, -1)
+  if (tableNo && /^[A-Z]$/.test(letter)) return `Table ${tableNo} · ${letter}`
+  return `Table ${label}`
 }
 
 export function formatInr(paise: number): string {

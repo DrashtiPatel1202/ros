@@ -4,6 +4,7 @@ import {
   ApiError,
   api,
   formatInr,
+  formatTableSeat,
   type PosAction,
   type PosBootstrap,
   type PosOrderType,
@@ -253,9 +254,10 @@ export function PosBilling() {
   }
 
   function blankBill(nextTable = "") {
+    const letter = nextTable.slice(-1)
     setLines([])
     setTableLabel(nextTable)
-    setCustomerName("")
+    setCustomerName(nextTable.length > 1 && /^[A-Z]$/.test(letter) ? `Guest ${letter}` : "")
     setCustomerPhone("")
     setPax(1)
     setOrderNote("")
@@ -325,6 +327,8 @@ export function PosBilling() {
             })
       saveKey.current = null
       setOrderId(saved.id)
+      if (saved.tableLabel) setTableLabel(saved.tableLabel)
+      if (saved.customerName) setCustomerName(saved.customerName)
       setOrderNo(saved.orderNo)
       setVersion(saved.version)
       setKotNo(saved.kotNo)
@@ -362,6 +366,15 @@ export function PosBilling() {
     setPaymentType("cash")
     setPaidRupees((bill.totalPaise / 100).toFixed(2))
     setSettleOpen(true)
+  }
+
+  function seatNext(table: PosBootstrap["tables"][number]) {
+    const next = nextCover(table.tableNo, table.covers.map((cover) => cover.letter))
+    if (!next) {
+      setError("Every guest letter on this table is already open.")
+      return
+    }
+    startTable(next, null)
   }
 
   function startTable(tableNo: string, existingId: number | null) {
@@ -451,7 +464,7 @@ export function PosBilling() {
           <div className="poss-head-meta">
             {orderNo != null && <span className="poss-billno">Bill #{orderNo}</span>}
             {kotNo != null && <span className="poss-kotno">KOT {kotNo}</span>}
-            {tableLabel && orderType === "dine_in" && <span className="poss-tableno">Table {tableLabel}</span>}
+            {tableLabel && orderType === "dine_in" && <span className="poss-tableno">{formatTableSeat(tableLabel)}</span>}
           </div>
         </header>
 
@@ -477,6 +490,7 @@ export function PosBilling() {
                 <span><i className="dot running" /> Running</span>
                 <span><i className="dot printed" /> Printed</span>
               </div>
+              <p className="poss-guest-hint">Letters are separate guests. Table 1 can have A, B, C, and D open at the same time.</p>
             </div>
             {boot.tables.some((table) => table.area === activeArea && table.placed) ? (
               <>
@@ -489,12 +503,12 @@ export function PosBilling() {
                   .map((table) => (
                     <div
                       key={table.id}
-                      className={`fp-shape live ${table.shape} ${table.status === "printed" ? "printed" : table.occupied ? "running" : "free"}`}
+                      className={`fp-shape live ${table.shape} ${tableTone(table)}`}
                       style={{ left: table.x, top: table.y, width: table.width, height: table.height, fontSize: table.textSize }}
                     >
-                      <button type="button" onClick={() => startTable(table.tableNo, table.orderId)}>
+                      <button type="button" onClick={() => seatNext(table)}>
                         <span>{table.tableNo}</span>
-                        {table.occupied && table.totalPaise != null && <small>{formatInr(table.totalPaise)}</small>}
+                        {table.covers.length > 0 && <small>{table.covers.length} guests</small>}
                       </button>
                       <CoverRow table={table} onOpen={startTable} />
                     </div>
@@ -505,12 +519,11 @@ export function PosBilling() {
                   {boot.tables
                     .filter((table) => table.area === activeArea && !table.placed)
                     .map((t) => (
-                      <div key={t.id} className={`floor-table ${t.status === "printed" ? "printed" : t.occupied ? "running" : "free"}`}>
-                        <button type="button" className="floor-table-main" onClick={() => startTable(t.tableNo, t.orderId)}>
+                      <div key={t.id} className={`floor-table ${tableTone(t)}`}>
+                        <button type="button" className="floor-table-main" onClick={() => seatNext(t)}>
                           <strong>{t.tableNo}</strong>
                           <small>{t.seats} seats</small>
-                          {t.occupied && t.totalPaise != null && <em>{formatInr(t.totalPaise)}</em>}
-                          {!t.occupied && <em>Blank</em>}
+                          {t.covers.length > 0 ? <em>{t.covers.length} {t.covers.length === 1 ? "guest" : "guests"}</em> : <em>Blank</em>}
                         </button>
                         <CoverRow table={t} onOpen={startTable} />
                       </div>
@@ -523,12 +536,11 @@ export function PosBilling() {
                 {boot.tables
                   .filter((t) => t.area === activeArea)
                   .map((t) => (
-                    <div key={t.id} className={`floor-table ${t.status === "printed" ? "printed" : t.occupied ? "running" : "free"}`}>
-                      <button type="button" className="floor-table-main" onClick={() => startTable(t.tableNo, t.orderId)}>
+                    <div key={t.id} className={`floor-table ${tableTone(t)}`}>
+                      <button type="button" className="floor-table-main" onClick={() => seatNext(t)}>
                         <strong>{t.tableNo}</strong>
                         <small>{t.seats} seats</small>
-                        {t.occupied && t.totalPaise != null && <em>{formatInr(t.totalPaise)}</em>}
-                        {!t.occupied && <em>Blank</em>}
+                        {t.covers.length > 0 ? <em>{t.covers.length} {t.covers.length === 1 ? "guest" : "guests"}</em> : <em>Blank</em>}
                       </button>
                       <CoverRow table={t} onOpen={startTable} />
                     </div>
@@ -575,7 +587,7 @@ export function PosBilling() {
                 />
                 {orderType === "dine_in" && (
                   <button type="button" className="poss-table-chip" onClick={() => setScreen("tables")}>
-                    {tableLabel ? `Table ${tableLabel}` : "Select table"}
+                    {tableLabel ? formatTableSeat(tableLabel) : "Select table"}
                   </button>
                 )}
                 {orderId != null && orderType === "dine_in" && (
@@ -731,25 +743,28 @@ export function PosBilling() {
               <h2>Move table</h2>
               <button type="button" onClick={() => setMoveOpen(false)} aria-label="Close">×</button>
             </header>
-            <p>Current table {tableLabel || "—"}. Choose a blank table.</p>
+            <p>{tableLabel ? formatTableSeat(tableLabel) : "Current guest"}. Pick another table. This guest keeps their own bill and sits as the next free letter.</p>
             <div className="poss-floor-grid">
               {boot.tables
-                .filter((table) => !table.occupied && table.tableNo !== tableLabel)
-                .map((table) => (
+                .filter((table) => table.tableNo !== tableNoOf(tableLabel))
+                .map((table) => {
+                  const next = nextCover(table.tableNo, table.covers.map((cover) => cover.letter))
+                  return (
                   <button
                     key={table.id}
                     type="button"
-                    className="floor-table free"
-                    disabled={busy || version == null || orderId == null}
+                    className={`floor-table ${table.covers.length ? "running" : "free"}`}
+                    disabled={busy || version == null || orderId == null || !next}
                     onClick={() => {
-                      if (orderId == null || version == null) return
+                      if (orderId == null || version == null || !next) return
                       setBusy(true)
                       void api
-                        .posMoveTable(orderId, version, table.tableNo)
+                        .posMoveTable(orderId, version, next)
                         .then(async (moved) => {
-                          setTableLabel(moved.tableLabel ?? table.tableNo)
+                          setTableLabel(moved.tableLabel ?? next)
+                          if (moved.customerName) setCustomerName(moved.customerName)
                           setVersion(moved.version)
-                          setNotice(`Moved to table ${table.tableNo}`)
+                          setNotice(`Moved to ${formatTableSeat(moved.tableLabel ?? next)}`)
                           setMoveOpen(false)
                           await loadBoot()
                         })
@@ -758,9 +773,10 @@ export function PosBilling() {
                     }}
                   >
                     <strong>{table.tableNo}</strong>
-                    <small>{table.area}</small>
+                    <small>{table.area} · next {next ? next.slice(table.tableNo.length) : "—"}</small>
                   </button>
-                ))}
+                  )
+                })}
             </div>
           </div>
         </div>
@@ -854,7 +870,7 @@ export function PosBilling() {
               <strong>{boot.outlet.name}</strong>
               <p>{slip === "kot" ? `KOT ${kotNo ?? ""}` : `Bill #${orderNo ?? ""}`}</p>
               <p>
-                {orderType === "dine_in" ? `Table ${tableLabel}` : orderType === "pickup" ? "Pick Up" : "Delivery"}
+                {orderType === "dine_in" ? formatTableSeat(tableLabel) : orderType === "pickup" ? "Pick Up" : "Delivery"}
                 {customerName ? ` · ${customerName}` : ""}
               </p>
               <ul>
@@ -893,6 +909,26 @@ function nextCover(tableNo: string, letters: string[]) {
   return null
 }
 
+function tableNoOf(label: string) {
+  const letter = label.slice(-1)
+  const tableNo = label.slice(0, -1)
+  return tableNo && /^[A-Z]$/.test(letter) ? tableNo : label
+}
+
+function tableTone(table: PosBootstrap["tables"][number]) {
+  if (table.covers.length === 0 && !table.occupied) return "free"
+  if (table.covers.some((cover) => cover.status !== "printed") || table.status === "saved") return "running"
+  return "printed"
+}
+
+function seatLetters(table: PosBootstrap["tables"][number]) {
+  const count = Math.max(table.seats, table.covers.length, 1)
+  const letters = new Set<string>()
+  for (let index = 0; index < Math.min(26, count); index += 1) letters.add(String.fromCharCode(65 + index))
+  for (const cover of table.covers) letters.add(cover.letter)
+  return [...letters].sort()
+}
+
 function CoverRow({
   table,
   onOpen,
@@ -900,23 +936,28 @@ function CoverRow({
   table: PosBootstrap["tables"][number]
   onOpen: (label: string, orderId: number | null) => void
 }) {
-  if (!table.occupied && table.covers.length === 0) return null
+  const open = new Map(table.covers.map((cover) => [cover.letter, cover]))
+  const letters = seatLetters(table)
   const next = nextCover(table.tableNo, table.covers.map((cover) => cover.letter))
+  const nextLetter = next ? next.slice(table.tableNo.length) : null
   return (
-    <div className="floor-covers">
-      {table.covers.map((cover) => (
-        <button
-          key={cover.letter}
-          type="button"
-          className={cover.status === "printed" ? "printed" : "running"}
-          title={`Table ${cover.label}`}
-          onClick={() => onOpen(cover.label, cover.orderId)}
-        >
-          {cover.letter}
-        </button>
-      ))}
-      {next && (
-        <button type="button" className="add" title={`Another customer · Table ${next}`} onClick={() => onOpen(next, null)}>
+    <div className="floor-covers" aria-label={`Guests at table ${table.tableNo}`}>
+      {letters.map((letter) => {
+        const cover = open.get(letter)
+        return (
+          <button
+            key={letter}
+            type="button"
+            className={cover ? (cover.status === "printed" ? "printed" : "running") : "free"}
+            title={cover ? `${cover.customerName || `Guest ${letter}`} · Bill #${cover.orderNo}` : `Seat guest ${letter}`}
+            onClick={() => onOpen(cover ? cover.label : `${table.tableNo}${letter}`, cover?.orderId ?? null)}
+          >
+            {letter}
+          </button>
+        )
+      })}
+      {next && nextLetter && !letters.includes(nextLetter) && (
+        <button type="button" className="add" title={`Add guest ${nextLetter}`} onClick={() => onOpen(next, null)}>
           +
         </button>
       )}

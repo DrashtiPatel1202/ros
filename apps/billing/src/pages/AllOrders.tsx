@@ -4,6 +4,7 @@ import {
   ApiError,
   api,
   formatInr,
+  formatTableSeat,
   ORDER_TYPE_LABEL,
   PAYMENT_LABEL,
   STATUS_LABEL,
@@ -193,7 +194,7 @@ export function AllOrders() {
                     <tr key={order.id}>
                       <td>
                         <strong>#{order.orderNo}</strong>
-                        {order.tableLabel && <small className="d-block text-muted">Table {order.tableLabel}</small>}
+                        {order.tableLabel && <small className="d-block text-muted">{formatTableSeat(order.tableLabel)}</small>}
                       </td>
                       <td>{ORDER_TYPE_LABEL[order.orderType]}</td>
                       <td>
@@ -236,7 +237,7 @@ export function AllOrders() {
             </div>
             <p className="text-muted">
               {ORDER_TYPE_LABEL[selected.orderType]}
-              {selected.tableLabel ? ` · Table ${selected.tableLabel}` : ""} ·{" "}
+              {selected.tableLabel ? ` · ${formatTableSeat(selected.tableLabel)}` : ""} ·{" "}
               {STATUS_LABEL[selected.status]} · {PAYMENT_LABEL[selected.paymentType]}
             </p>
             <ul className="list-unstyled mb-3">

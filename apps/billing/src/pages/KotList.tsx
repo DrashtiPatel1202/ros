@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { ApiError, api, ORDER_TYPE_LABEL, type PosKot } from "../api"
+import { ApiError, api, formatTableSeat, ORDER_TYPE_LABEL, type PosKot } from "../api"
 
 const STATUS: Record<PosKot["status"], string> = {
   active: "Active",
@@ -200,7 +200,7 @@ export function KotList() {
                   </td>
                   <td>{when(row.punchedAt)}</td>
                   <td>{ORDER_TYPE_LABEL[row.orderType]}</td>
-                  <td>{row.tableLabel ? `Table ${row.tableLabel}` : "—"}</td>
+                  <td>{row.tableLabel ? formatTableSeat(row.tableLabel) : "—"}</td>
                   <td>{row.customerName || row.customerPhone || "—"}</td>
                   <td>{STATUS[row.status]}</td>
                   <td>

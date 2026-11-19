@@ -3,6 +3,7 @@ import {
   ApiError,
   api,
   formatInr,
+  formatTableSeat,
   ORDER_TYPE_LABEL,
   STATUS_LABEL,
   type PosKot,
@@ -70,7 +71,7 @@ export function PosRunningScreen({
             <strong>#{order.orderNo}</strong>
             <span>
               {ORDER_TYPE_LABEL[order.orderType]}
-              {order.tableLabel ? ` · Table ${order.tableLabel}` : ""}
+              {order.tableLabel ? ` · ${formatTableSeat(order.tableLabel)}` : ""}
               <small>{order.customerName || "Walk-in"} · {order.itemCount} items · {clock(order.updatedAt, timeZone)}</small>
             </span>
             <em className={`kot-status ${order.status}`}>{STATUS_LABEL[order.status]}</em>
@@ -142,7 +143,7 @@ export function PosKotScreen({
             <strong>KOT {kot.kotNo}</strong>
             <span>
               Bill #{kot.orderNo}
-              {kot.tableLabel ? ` · Table ${kot.tableLabel}` : ""} · {ORDER_TYPE_LABEL[kot.orderType]}
+              {kot.tableLabel ? ` · ${formatTableSeat(kot.tableLabel)}` : ""} · {ORDER_TYPE_LABEL[kot.orderType]}
               <small>
                 {kot.items.map((item) => `${item.qty}× ${item.name}`).join(", ") || "No items"} · {clock(kot.punchedAt, timeZone)}
               </small>

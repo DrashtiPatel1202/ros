@@ -3,6 +3,7 @@ import {
   ApiError,
   api,
   formatInr,
+  formatTableSeat,
   ORDER_TYPE_LABEL,
   STATUS_LABEL,
   type PosLiveResponse,
@@ -124,7 +125,7 @@ export function LiveOrders() {
                       </td>
                       <td>{ORDER_TYPE_LABEL[order.orderType]}</td>
                       <td>
-                        {order.tableLabel ? `Table ${order.tableLabel}` : "—"}
+                        {order.tableLabel ? formatTableSeat(order.tableLabel) : "—"}
                         <small className="d-block text-muted">{order.customerName || "Walk-in"}</small>
                       </td>
                       <td>{order.itemCount}</td>
@@ -155,7 +156,7 @@ export function LiveOrders() {
             <div className="live-table-grid">
               {[...byTable.entries()].map(([table, order]) => (
                 <a key={table} className="live-table-card" href={`/pos/billing?edit=${order.id}`}>
-                  <strong>Table {table}</strong>
+                  <strong>{formatTableSeat(table)}</strong>
                   <span>#{order.orderNo} · {STATUS_LABEL[order.status]}</span>
                   <span>{formatInr(order.totalPaise)}</span>
                 </a>
