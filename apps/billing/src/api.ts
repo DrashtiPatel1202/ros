@@ -50,6 +50,7 @@ export type DashboardData = {
     revenuePaise: number
     platforms: { name: string; orders: number; prepaid: number; cod: number; revenuePaise: number }[]
   }
+  items?: { name: string; qty: number; totalPaise: number }[]
   actionCenter: { id: string; title: string; detail: string }[]
   snapshotReady: boolean
   snapshotDate: string
@@ -223,6 +224,17 @@ export const api = {
         dietary: "veg" | "non_veg" | "egg"
         available: boolean
       }[]
+      variants: { id: number; name: string; pricePaise: number; active: boolean }[]
+      itemVariants: { itemId: number; variantId: number; pricePaise: number | null }[]
+      addonGroups: {
+        id: number
+        name: string
+        minSelect: number
+        maxSelect: number
+        active: boolean
+        items: { id: number; name: string; pricePaise: number; active: boolean }[]
+      }[]
+      itemAddonGroups: { itemId: number; groupId: number }[]
     }>("/api/v1/billing/menu"),
   addMenuCategory: (name: string) =>
     request<{ id: number }>("/api/v1/billing/menu/categories", { method: "POST", body: JSON.stringify({ name }) }),
@@ -246,6 +258,63 @@ export const api = {
       available: boolean
     }>,
   ) => request<{ ok: true }>(`/api/v1/billing/menu/items/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  saveVariant: (body: { name: string; pricePaise: number }) =>
+    request<{ id: number }>("/api/v1/billing/menu/variants", { method: "POST", body: JSON.stringify(body) }),
+  assignVariants: (itemId: number, variantIds: number[]) =>
+    request<{ ok: true }>(`/api/v1/billing/menu/items/${itemId}/variants`, { method: "PUT", body: JSON.stringify({ variantIds }) }),
+  saveAddonGroup: (body: { name: string; minSelect: number; maxSelect: number }) =>
+    request<{ id: number }>("/api/v1/billing/menu/addon-groups", { method: "POST", body: JSON.stringify(body) }),
+  saveAddonItem: (groupId: number, body: { name: string; pricePaise: number }) =>
+    request<{ id: number }>(`/api/v1/billing/menu/addon-groups/${groupId}/items`, { method: "POST", body: JSON.stringify(body) }),
+  assignAddons: (itemId: number, groupIds: number[]) =>
+    request<{ ok: true }>(`/api/v1/billing/menu/items/${itemId}/addons`, { method: "PUT", body: JSON.stringify({ groupIds }) }),
+  onlineOrders: (params: { status?: string; client?: string; orderNo?: string }) => {
+    const query = new URLSearchParams()
+    for (const [key, value] of Object.entries(params)) if (value) query.set(key, value)
+    return request<{
+      rows: {
+        id: number
+        client: string
+        clientOrderId: string
+        status: string
+        customerName: string
+        customerPhone: string
+        riderName: string
+        otp: string
+        totalPaise: number
+        note: string
+        orderId: number | null
+        createdAt: string
+      }[]
+    }>(`/api/v1/billing/online-orders?${query}`)
+  },
+  createOnlineOrder: (body: {
+    client: string
+    clientOrderId: string
+    customerName: string
+    customerPhone: string
+    note: string
+    lines: { menuItemId: number; qty: number }[]
+  }) => request<{ id: number; totalPaise: number }>("/api/v1/billing/online-orders", { method: "POST", body: JSON.stringify(body) }),
+  advanceOnlineOrder: (id: number, body?: { riderName?: string; otp?: string }) =>
+    request<{ status: string }>(`/api/v1/billing/online-orders/${id}/advance`, { method: "POST", body: JSON.stringify(body ?? {}) }),
+  cancelOnlineOrder: (id: number) => request<{ ok: true }>(`/api/v1/billing/online-orders/${id}/cancel`, { method: "POST" }),
+  invoiceOnlineOrder: (id: number) => request<{ orderId: number }>(`/api/v1/billing/online-orders/${id}/invoice`, { method: "POST" }),
+  dayEnd: () =>
+    request<{
+      today: { businessDate: string; orderCount: number; totalPaise: number; cashPaise: number; cardPaise: number; upiPaise: number; otherPaise: number; closed: boolean }
+      rows: { id: number; businessDate: string; billerName: string; orderCount: number; totalPaise: number; cashPaise: number; cardPaise: number; upiPaise: number; otherPaise: number; closedAt: string }[]
+    }>("/api/v1/billing/day-end"),
+  closeDay: () => request<{ id: number }>("/api/v1/billing/day-end", { method: "POST" }),
+  removeDayEnd: (id: number, password: string) =>
+    request<{ ok: true }>(`/api/v1/billing/day-end/${id}`, { method: "DELETE", body: JSON.stringify({ password }) }),
+  deliveries: () =>
+    request<{
+      rows: { id: number; orderNo: number; businessDate: string; status: string; customerName: string; customerPhone: string; totalPaise: number; provider: string }[]
+      chart: { day: string; orders: number; delivered: number }[]
+    }>("/api/v1/billing/deliveries"),
+  assignDelivery: (id: number, provider: string) =>
+    request<{ ok: true }>(`/api/v1/billing/deliveries/${id}`, { method: "PUT", body: JSON.stringify({ provider }) }),
   taxes: () =>
     request<{
       rows: {
@@ -636,6 +705,14 @@ export type PosBootstrap = {
     shortCode: string | null
     pricePaise: number
     dietary: "veg" | "non_veg" | "egg"
+    variants?: { id: number; name: string; pricePaise: number }[]
+    addonGroups?: {
+      id: number
+      name: string
+      minSelect: number
+      maxSelect: number
+      items: { id: number; name: string; pricePaise: number }[]
+    }[]
   }[]
   tables: {
     id: number

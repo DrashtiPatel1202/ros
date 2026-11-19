@@ -19,6 +19,7 @@ import { MarketplacePage } from "./pages/Marketplace"
 import { StaffPage } from "./pages/Staff"
 import { PosBilling } from "./pos/PosBilling"
 import { AppShell } from "./shell/AppShell"
+import { DayEnd, DeliveryManagement, OnlineOrders } from "./pages/Operations"
 import { PlaceholderPage } from "./shell/PlaceholderPage"
 import { APP_NAME, SIDEBAR, isSubGroup, titleForPath } from "./nav"
 
@@ -37,6 +38,9 @@ const IMPLEMENTED = new Set([
   "/items/kot_list",
   "/menus/menu_management",
   "/menus/menu_new/all",
+  "/onlines/online_dashboard",
+  "/orders/day_end_summary",
+  "/orders/delivery_services_list",
   "/menus/item_on_off",
   "/inventory_dashboard/new_inventory_dashboard",
   "/inventories/rm_list/all",
@@ -219,6 +223,9 @@ export function App() {
           <Route path="/items/kot_list" element={<KotList />} />
           <Route path="/menus/menu_management" element={<MenuHome />} />
           <Route path="/menus/menu_new/all" element={<AllInOneMenu />} />
+          <Route path="/onlines/online_dashboard" element={<OnlineOrders />} />
+          <Route path="/orders/day_end_summary" element={<DayEnd />} />
+          <Route path="/orders/delivery_services_list" element={<DeliveryManagement />} />
           <Route path="/menus/item_on_off" element={<MenuOnOff />} />
           <Route path="/inventory_dashboard/new_inventory_dashboard" element={<InventoryPage />} />
           <Route path="/inventories/rm_list/all" element={<InventoryPage />} />

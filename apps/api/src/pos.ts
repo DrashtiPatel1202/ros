@@ -71,6 +71,8 @@ const lineSchema = z.object({
   menuItemId: z.number().int().positive(),
   qty: z.number().int().min(1).max(99),
   note: z.string().trim().max(200).optional(),
+  variantId: z.number().int().positive().optional(),
+  addonIds: z.array(z.number().int().positive()).max(12).optional(),
 })
 
 const draftSchema = z.object({
@@ -118,13 +120,14 @@ export async function ensurePosSchema() {
 type Draft = z.infer<typeof draftSchema>
 
 async function priceLines(outletId: number, lines: Draft["lines"], discountPaise: number, taxRateBps: number) {
-  const merged = new Map<string, { menuItemId: number; qty: number; note?: string }>()
+  const merged = new Map<string, { menuItemId: number; qty: number; note?: string; variantId?: number; addonIds: number[] }>()
   for (const line of lines) {
     const note = line.note?.trim() ?? ""
-    const key = `${line.menuItemId}:${note}`
+    const addonIds = [...(line.addonIds ?? [])].sort((a, b) => a - b)
+    const key = `${line.menuItemId}:${line.variantId ?? 0}:${addonIds.join(",")}:${note}`
     const cur = merged.get(key)
     if (cur) cur.qty += line.qty
-    else merged.set(key, { menuItemId: line.menuItemId, qty: line.qty, note: note || undefined })
+    else merged.set(key, { menuItemId: line.menuItemId, qty: line.qty, note: note || undefined, variantId: line.variantId, addonIds })
   }
   const mergedLines = [...merged.values()]
   const ids = mergedLines.map((l) => l.menuItemId)
@@ -140,13 +143,44 @@ async function priceLines(outletId: number, lines: Draft["lines"], discountPaise
     if (!item || !item.is_available) {
       throw Object.assign(new Error("ITEM_UNAVAILABLE"), { code: "ITEM_UNAVAILABLE", itemId: line.menuItemId })
     }
+    let unitPrice = item.price_paise
+    let label = item.name
+    if (line.variantId) {
+      const variant = await pool.query<{ name: string; price: number }>(
+        `SELECT v.name, COALESCE(iv.price_paise, v.price_paise) AS price
+         FROM item_variants iv
+         JOIN menu_variants v ON v.id = iv.variant_id
+         WHERE iv.item_id = $1 AND iv.variant_id = $2 AND v.outlet_id = $3 AND v.is_active`,
+        [line.menuItemId, line.variantId, outletId],
+      )
+      if (!variant.rowCount) {
+        throw Object.assign(new Error("ITEM_UNAVAILABLE"), { code: "ITEM_UNAVAILABLE", itemId: line.menuItemId })
+      }
+      unitPrice = variant.rows[0]!.price
+      label = `${item.name} (${variant.rows[0]!.name})`
+    }
+    if (line.addonIds.length) {
+      const addons = await pool.query<{ name: string; price_paise: number }>(
+        `SELECT a.name, a.price_paise
+         FROM addon_items a
+         JOIN addon_groups g ON g.id = a.group_id
+         JOIN item_addon_groups ig ON ig.group_id = g.id
+         WHERE ig.item_id = $1 AND a.id = ANY($2::bigint[]) AND g.outlet_id = $3 AND a.is_active AND g.is_active`,
+        [line.menuItemId, line.addonIds, outletId],
+      )
+      if (addons.rowCount !== line.addonIds.length) {
+        throw Object.assign(new Error("ITEM_UNAVAILABLE"), { code: "ITEM_UNAVAILABLE", itemId: line.menuItemId })
+      }
+      unitPrice += addons.rows.reduce((sum, row) => sum + row.price_paise, 0)
+      label = `${label} + ${addons.rows.map((row) => row.name).join(", ")}`
+    }
     priced.push({
       menuItemId: line.menuItemId,
-      name: item.name,
-      unitPricePaise: item.price_paise,
+      name: label,
+      unitPricePaise: unitPrice,
       qty: line.qty,
       note: line.note ?? null,
-      lineTotalPaise: item.price_paise * line.qty,
+      lineTotalPaise: unitPrice * line.qty,
     })
   }
   const summary = summarize(
@@ -231,6 +265,25 @@ async function createKot(
   businessDate: string,
   items: { id: number; name: string; qty: number; note: string | null }[],
 ) {
+  const punched = await client.query<{ item_name: string; note: string | null; qty: number }>(
+    `SELECT ki.item_name, ki.note, SUM(ki.qty)::int AS qty
+     FROM kot_items ki JOIN kots k ON k.id = ki.kot_id
+     WHERE k.order_id = $1 AND k.status <> 'cancelled'
+     GROUP BY ki.item_name, ki.note`,
+    [orderId],
+  )
+  const already = new Map(punched.rows.map((row) => [`${row.item_name}\0${row.note ?? ""}`, Number(row.qty)]))
+  const deltas = items.flatMap((item) => {
+    const extra = item.qty - (already.get(`${item.name}\0${item.note ?? ""}`) ?? 0)
+    return extra > 0 ? [{ ...item, qty: extra }] : []
+  })
+  if (deltas.length === 0) {
+    const last = await client.query<{ kot_no: number }>(
+      `SELECT kot_no FROM kots WHERE order_id = $1 AND status <> 'cancelled' ORDER BY id DESC LIMIT 1`,
+      [orderId],
+    )
+    return last.rowCount ? Number(last.rows[0]!.kot_no) : null
+  }
   let kotNo = 0
   let kotId = 0
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -249,7 +302,7 @@ async function createKot(
     }
   }
   if (!kotId) throw Object.assign(new Error("Could not issue a KOT number"), { code: "KOT_NUMBER" })
-  for (const item of items) {
+  for (const item of deltas) {
     await client.query(
       `INSERT INTO kot_items (kot_id, order_item_id, item_name, qty, note) VALUES ($1,$2,$3,$4,$5)`,
       [kotId, item.id, item.name, item.qty, item.note],
@@ -322,6 +375,34 @@ export async function registerPosRoutes(app: FastifyInstance) {
       `SELECT id, category_id, name, short_code, price_paise, dietary
        FROM menu_items WHERE outlet_id = $1 AND is_available
        ORDER BY sort_rank, id`,
+      [session.outletId],
+    )
+    const variantRows = await pool.query<{ item_id: string; variant_id: string; name: string; price: number }>(
+      `SELECT iv.item_id, iv.variant_id, v.name, COALESCE(iv.price_paise, v.price_paise) AS price
+       FROM item_variants iv
+       JOIN menu_variants v ON v.id = iv.variant_id
+       JOIN menu_items i ON i.id = iv.item_id
+       WHERE i.outlet_id = $1 AND v.is_active`,
+      [session.outletId],
+    )
+    const addonRows = await pool.query<{
+      item_id: string
+      group_id: string
+      group_name: string
+      min_select: number
+      max_select: number
+      addon_id: string
+      addon_name: string
+      price_paise: number
+    }>(
+      `SELECT ig.item_id, g.id AS group_id, g.name AS group_name, g.min_select, g.max_select,
+              a.id AS addon_id, a.name AS addon_name, a.price_paise
+       FROM item_addon_groups ig
+       JOIN addon_groups g ON g.id = ig.group_id
+       JOIN addon_items a ON a.group_id = g.id
+       JOIN menu_items i ON i.id = ig.item_id
+       WHERE i.outlet_id = $1 AND g.is_active AND a.is_active
+       ORDER BY g.name, a.name`,
       [session.outletId],
     )
     const tables = await pool.query<{
@@ -410,6 +491,22 @@ export async function registerPosRoutes(app: FastifyInstance) {
         shortCode: i.short_code,
         pricePaise: i.price_paise,
         dietary: i.dietary,
+        variants: variantRows.rows
+          .filter((row) => Number(row.item_id) === Number(i.id))
+          .map((row) => ({ id: Number(row.variant_id), name: row.name, pricePaise: row.price })),
+        addonGroups: [...new Set(addonRows.rows.filter((row) => Number(row.item_id) === Number(i.id)).map((row) => Number(row.group_id)))].map(
+          (groupId) => {
+            const rows = addonRows.rows.filter((row) => Number(row.item_id) === Number(i.id) && Number(row.group_id) === groupId)
+            const head = rows[0]!
+            return {
+              id: groupId,
+              name: head.group_name,
+              minSelect: head.min_select,
+              maxSelect: head.max_select,
+              items: rows.map((row) => ({ id: Number(row.addon_id), name: row.addon_name, pricePaise: row.price_paise })),
+            }
+          },
+        ),
       })),
       tables: tables.rows.map((t) => {
         const running = busy.get(t.table_no)
@@ -579,7 +676,7 @@ export async function registerPosRoutes(app: FastifyInstance) {
         kotNo = await createKot(client, session.outletId, Number(order.id), businessDate, lineRows)
         order.kot_no = kotNo
       }
-      if (["kot_print", "save_print", "settle"].includes(parsed.data.action)) {
+      if (parsed.data.action === "settle") {
         await markKotsUsed(client, Number(order.id))
       }
 
@@ -683,10 +780,10 @@ export async function registerPosRoutes(app: FastifyInstance) {
       await client.query("DELETE FROM order_items WHERE order_id = $1", [orderId])
       const lineRows = await insertLines(client, session.outletId, orderId, priced.priced)
 
-      if (["kot", "kot_print", "save", "save_print", "settle"].includes(action)) {
+      if (["kot", "kot_print", "save", "save_print"].includes(action)) {
         await createKot(client, session.outletId, orderId, pgDateToIso(row.business_date), lineRows)
       }
-      if (["kot_print", "save_print", "settle"].includes(action)) {
+      if (action === "settle") {
         await markKotsUsed(client, orderId)
       }
 

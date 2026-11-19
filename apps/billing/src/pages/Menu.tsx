@@ -13,7 +13,7 @@ export function MenuHome() {
       <div className="config-grid">
         <Link to="/menus/menu_new/all" className="config-tile">
           <span className="config-tile-icon"><i className="bi bi-grid" /></span>
-          <span><strong>All In One Menu</strong><small>Items, categories, taxes and discounts. This is what the POS punches.</small></span>
+          <span><strong>All In One Menu</strong><small>Items, categories, variations, addons, taxes and discounts. This is what the POS punches.</small></span>
           <i className="bi bi-chevron-right config-tile-go" />
         </Link>
         <Link to="/menus/item_on_off" className="config-tile">
@@ -34,7 +34,7 @@ export function MenuHome() {
 export function AllInOneMenu() {
   const [params, setParams] = useSearchParams()
   const tabParam = params.get("tab")
-  const tab = tabParam === "categories" || tabParam === "taxes" || tabParam === "discounts" ? tabParam : "items"
+  const tab = ["categories", "variants", "addons", "taxes", "discounts"].includes(tabParam ?? "") ? tabParam! : "items"
   const [data, setData] = useState<MenuData | null>(null)
   const [error, setError] = useState("")
   const [query, setQuery] = useState("")
@@ -64,7 +64,7 @@ export function AllInOneMenu() {
       <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
         <h1 className="page-title mb-0">All In One Menu</h1>
         <div className="pos-tabs">
-          {(["items", "categories", "taxes", "discounts"] as const).map((id) => (
+          {(["items", "categories", "variants", "addons", "taxes", "discounts"] as const).map((id) => (
             <button key={id} type="button" className={tab === id ? "on" : ""} onClick={() => setParams(id === "items" ? {} : { tab: id })}>
               {id[0]!.toUpperCase() + id.slice(1)}
             </button>
@@ -107,6 +107,8 @@ export function AllInOneMenu() {
           </div>
         </div>
       )}
+      {data && tab === "variants" && <VariantTab data={data} onChange={load} onError={setError} />}
+      {data && tab === "addons" && <AddonTab data={data} onChange={load} onError={setError} />}
       {tab === "taxes" && <TaxTab onError={setError} />}
       {tab === "discounts" && <DiscountTab onError={setError} />}
     </div>
@@ -416,6 +418,91 @@ export function MenuOnOff() {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+function rupeesToPaise(value: string) {
+  const rupees = Number(value)
+  return Number.isFinite(rupees) ? Math.round(rupees * 100) : 0
+}
+
+function VariantTab({ data, onChange, onError }: { data: MenuData; onChange: () => Promise<void>; onError: (message: string) => void }) {
+  const [name, setName] = useState("")
+  const [price, setPrice] = useState("")
+  const [itemId, setItemId] = useState(data.items[0]?.id ?? 0)
+  const assigned = new Set(data.itemVariants.filter((row) => row.itemId === itemId).map((row) => row.variantId))
+  return (
+    <div className="card-pp">
+      <form className="d-flex gap-2 mb-3" onSubmit={(event) => {
+        event.preventDefault()
+        void api.saveVariant({ name, pricePaise: rupeesToPaise(price) }).then(onChange).catch((caught) => onError(caught instanceof Error ? caught.message : "Could not save"))
+      }}>
+        <input className="form-control" placeholder="Variation name, e.g. Half" value={name} onChange={(e) => setName(e.target.value)} required />
+        <input className="form-control" placeholder="Price ₹" value={price} onChange={(e) => setPrice(e.target.value)} required />
+        <button className="btn btn-primary" type="submit">Add</button>
+      </form>
+      <label className="form-label">Assign to item</label>
+      <select className="form-select mb-3" value={itemId} onChange={(e) => setItemId(Number(e.target.value))}>
+        {data.items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      {data.variants.map((variant) => (
+        <label key={variant.id} className="d-flex gap-2 align-items-center mb-2">
+          <input type="checkbox" checked={assigned.has(variant.id)} onChange={(event) => {
+            const next = event.target.checked ? [...assigned, variant.id] : [...assigned].filter((id) => id !== variant.id)
+            void api.assignVariants(itemId, next).then(onChange).catch((caught) => onError(caught instanceof Error ? caught.message : "Could not assign"))
+          }} />
+          <span>{variant.name} · {formatInr(variant.pricePaise)}</span>
+        </label>
+      ))}
+      {data.variants.length === 0 && <p className="text-muted mb-0">No variations yet. Half and Full are the usual pair.</p>}
+    </div>
+  )
+}
+
+function AddonTab({ data, onChange, onError }: { data: MenuData; onChange: () => Promise<void>; onError: (message: string) => void }) {
+  const [group, setGroup] = useState("")
+  const [itemId, setItemId] = useState(data.items[0]?.id ?? 0)
+  const [addonName, setAddonName] = useState("")
+  const [addonPrice, setAddonPrice] = useState("")
+  const [groupId, setGroupId] = useState(data.addonGroups[0]?.id ?? 0)
+  const assigned = new Set(data.itemAddonGroups.filter((row) => row.itemId === itemId).map((row) => row.groupId))
+  return (
+    <div className="card-pp">
+      <form className="d-flex gap-2 mb-3" onSubmit={(event) => {
+        event.preventDefault()
+        void api.saveAddonGroup({ name: group, minSelect: 0, maxSelect: 3 }).then(onChange).catch((caught) => onError(caught instanceof Error ? caught.message : "Could not save"))
+      }}>
+        <input className="form-control" placeholder="Addon group, e.g. Extra" value={group} onChange={(e) => setGroup(e.target.value)} required />
+        <button className="btn btn-primary" type="submit">Add group</button>
+      </form>
+      <form className="d-flex gap-2 mb-3" onSubmit={(event) => {
+        event.preventDefault()
+        void api.saveAddonItem(groupId, { name: addonName, pricePaise: rupeesToPaise(addonPrice) }).then(() => { setAddonName(""); setAddonPrice(""); return onChange() }).catch((caught) => onError(caught instanceof Error ? caught.message : "Could not save"))
+      }}>
+        <select className="form-select" value={groupId} onChange={(e) => setGroupId(Number(e.target.value))}>
+          {data.addonGroups.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+        </select>
+        <input className="form-control" placeholder="Addon item" value={addonName} onChange={(e) => setAddonName(e.target.value)} required />
+        <input className="form-control" placeholder="Price ₹" value={addonPrice} onChange={(e) => setAddonPrice(e.target.value)} required />
+        <button className="btn btn-primary" type="submit" disabled={!groupId}>Add</button>
+      </form>
+      {data.addonGroups.map((row) => (
+        <p key={row.id} className="mb-1">{row.name}: {row.items.map((item) => `${item.name} ${formatInr(item.pricePaise)}`).join(", ") || "no items"}</p>
+      ))}
+      <label className="form-label mt-3">Assign groups to item</label>
+      <select className="form-select mb-3" value={itemId} onChange={(e) => setItemId(Number(e.target.value))}>
+        {data.items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      {data.addonGroups.map((row) => (
+        <label key={row.id} className="d-flex gap-2 align-items-center mb-2">
+          <input type="checkbox" checked={assigned.has(row.id)} onChange={(event) => {
+            const next = event.target.checked ? [...assigned, row.id] : [...assigned].filter((id) => id !== row.id)
+            void api.assignAddons(itemId, next).then(onChange).catch((caught) => onError(caught instanceof Error ? caught.message : "Could not assign"))
+          }} />
+          <span>{row.name}</span>
+        </label>
+      ))}
     </div>
   )
 }

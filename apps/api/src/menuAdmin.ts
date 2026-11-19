@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import { writeAudit } from "./audit.ts"
@@ -13,7 +16,13 @@ async function bumpMenu(outletId: number) {
 
 const dietary = z.enum(["veg", "non_veg", "egg"])
 
+async function ensureMenuExtras() {
+  const sqlPath = join(dirname(fileURLToPath(import.meta.url)), "../sql/007_gaps.sql")
+  await pool.query(readFileSync(sqlPath, "utf8"))
+}
+
 export async function registerMenuAdminRoutes(app: FastifyInstance) {
+  await ensureMenuExtras()
   app.get("/api/v1/billing/menu", async (request, reply) => {
     const session = await requireBilling(request, reply)
     if (!session) return
@@ -26,6 +35,29 @@ export async function registerMenuAdminRoutes(app: FastifyInstance) {
     const items = await pool.query(
       `SELECT id, category_id, name, short_code, price_paise, dietary, is_available, sort_rank
        FROM menu_items WHERE outlet_id = $1 ORDER BY sort_rank, id`,
+      [session.outletId],
+    )
+    const variants = await pool.query(
+      `SELECT id, name, price_paise, is_active FROM menu_variants WHERE outlet_id = $1 ORDER BY name`,
+      [session.outletId],
+    )
+    const itemVariants = await pool.query(
+      `SELECT iv.item_id, iv.variant_id, iv.price_paise
+       FROM item_variants iv JOIN menu_items i ON i.id = iv.item_id WHERE i.outlet_id = $1`,
+      [session.outletId],
+    )
+    const groups = await pool.query(
+      `SELECT id, name, min_select, max_select, is_active FROM addon_groups WHERE outlet_id = $1 ORDER BY name`,
+      [session.outletId],
+    )
+    const addonItems = await pool.query(
+      `SELECT a.id, a.group_id, a.name, a.price_paise, a.is_active
+       FROM addon_items a JOIN addon_groups g ON g.id = a.group_id WHERE g.outlet_id = $1 ORDER BY a.name`,
+      [session.outletId],
+    )
+    const itemGroups = await pool.query(
+      `SELECT ig.item_id, ig.group_id FROM item_addon_groups ig
+       JOIN menu_items i ON i.id = ig.item_id WHERE i.outlet_id = $1`,
       [session.outletId],
     )
     return {
@@ -44,6 +76,36 @@ export async function registerMenuAdminRoutes(app: FastifyInstance) {
         pricePaise: row.price_paise as number,
         dietary: row.dietary as "veg" | "non_veg" | "egg",
         available: row.is_available as boolean,
+      })),
+      variants: variants.rows.map((row) => ({
+        id: Number(row.id),
+        name: row.name as string,
+        pricePaise: row.price_paise as number,
+        active: row.is_active as boolean,
+      })),
+      itemVariants: itemVariants.rows.map((row) => ({
+        itemId: Number(row.item_id),
+        variantId: Number(row.variant_id),
+        pricePaise: row.price_paise == null ? null : Number(row.price_paise),
+      })),
+      addonGroups: groups.rows.map((row) => ({
+        id: Number(row.id),
+        name: row.name as string,
+        minSelect: row.min_select as number,
+        maxSelect: row.max_select as number,
+        active: row.is_active as boolean,
+        items: addonItems.rows
+          .filter((item) => Number(item.group_id) === Number(row.id))
+          .map((item) => ({
+            id: Number(item.id),
+            name: item.name as string,
+            pricePaise: item.price_paise as number,
+            active: item.is_active as boolean,
+          })),
+      })),
+      itemAddonGroups: itemGroups.rows.map((row) => ({
+        itemId: Number(row.item_id),
+        groupId: Number(row.group_id),
       })),
     }
   })
@@ -172,6 +234,98 @@ export async function registerMenuAdminRoutes(app: FastifyInstance) {
         summary: `${before.name} turned ${parsed.data.available ? "on" : "off"}`,
       })
     }
+    return { ok: true }
+  })
+
+  app.post("/api/v1/billing/menu/variants", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const parsed = z.object({ name: z.string().trim().min(1).max(40), pricePaise: z.number().int().min(0) }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Name and price are required.")
+    const row = await pool.query(
+      `INSERT INTO menu_variants (outlet_id, name, price_paise) VALUES ($1,$2,$3)
+       ON CONFLICT (outlet_id, name) DO UPDATE SET price_paise = EXCLUDED.price_paise, is_active = true
+       RETURNING id`,
+      [session.outletId, parsed.data.name, parsed.data.pricePaise],
+    )
+    await bumpMenu(session.outletId)
+    return { id: Number(row.rows[0]!.id) }
+  })
+
+  app.put("/api/v1/billing/menu/items/:id/variants", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const itemId = Number((request.params as { id: string }).id)
+    const parsed = z.object({ variantIds: z.array(z.number().int().positive()).max(20) }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Choose the variations for this item.")
+    const item = await pool.query("SELECT id FROM menu_items WHERE id = $1 AND outlet_id = $2", [itemId, session.outletId])
+    if (!item.rowCount) return sendError(reply, 404, "NOT_FOUND", "Item not found.")
+    await pool.query("DELETE FROM item_variants WHERE item_id = $1", [itemId])
+    for (const variantId of parsed.data.variantIds) {
+      await pool.query(
+        `INSERT INTO item_variants (item_id, variant_id)
+         SELECT $1, id FROM menu_variants WHERE id = $2 AND outlet_id = $3`,
+        [itemId, variantId, session.outletId],
+      )
+    }
+    await bumpMenu(session.outletId)
+    return { ok: true }
+  })
+
+  app.post("/api/v1/billing/menu/addon-groups", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const parsed = z
+      .object({
+        name: z.string().trim().min(1).max(40),
+        minSelect: z.number().int().min(0).max(10).default(0),
+        maxSelect: z.number().int().min(1).max(10).default(1),
+      })
+      .safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Group name is required.")
+    const row = await pool.query(
+      `INSERT INTO addon_groups (outlet_id, name, min_select, max_select) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (outlet_id, name) DO UPDATE SET min_select = EXCLUDED.min_select, max_select = EXCLUDED.max_select, is_active = true
+       RETURNING id`,
+      [session.outletId, parsed.data.name, parsed.data.minSelect, parsed.data.maxSelect],
+    )
+    await bumpMenu(session.outletId)
+    return { id: Number(row.rows[0]!.id) }
+  })
+
+  app.post("/api/v1/billing/menu/addon-groups/:id/items", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const groupId = Number((request.params as { id: string }).id)
+    const parsed = z.object({ name: z.string().trim().min(1).max(40), pricePaise: z.number().int().min(0) }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Addon name and price are required.")
+    const group = await pool.query("SELECT id FROM addon_groups WHERE id = $1 AND outlet_id = $2", [groupId, session.outletId])
+    if (!group.rowCount) return sendError(reply, 404, "NOT_FOUND", "Addon group not found.")
+    const row = await pool.query(
+      `INSERT INTO addon_items (group_id, name, price_paise) VALUES ($1,$2,$3) RETURNING id`,
+      [groupId, parsed.data.name, parsed.data.pricePaise],
+    )
+    await bumpMenu(session.outletId)
+    return { id: Number(row.rows[0]!.id) }
+  })
+
+  app.put("/api/v1/billing/menu/items/:id/addons", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const itemId = Number((request.params as { id: string }).id)
+    const parsed = z.object({ groupIds: z.array(z.number().int().positive()).max(20) }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Choose the addon groups for this item.")
+    const item = await pool.query("SELECT id FROM menu_items WHERE id = $1 AND outlet_id = $2", [itemId, session.outletId])
+    if (!item.rowCount) return sendError(reply, 404, "NOT_FOUND", "Item not found.")
+    await pool.query("DELETE FROM item_addon_groups WHERE item_id = $1", [itemId])
+    for (const groupId of parsed.data.groupIds) {
+      await pool.query(
+        `INSERT INTO item_addon_groups (item_id, group_id)
+         SELECT $1, id FROM addon_groups WHERE id = $2 AND outlet_id = $3`,
+        [itemId, groupId, session.outletId],
+      )
+    }
+    await bumpMenu(session.outletId)
     return { ok: true }
   })
 }

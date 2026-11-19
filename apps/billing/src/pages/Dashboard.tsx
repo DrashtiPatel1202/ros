@@ -243,7 +243,21 @@ export function Dashboard() {
               </button>
             </div>
           </div>
-          <div className="empty-soft">No sales to compare yet</div>
+          {(data?.items ?? []).length === 0 ? (
+            <div className="empty-soft">No sales to compare yet</div>
+          ) : (
+            <table className="table table-sm mb-0">
+              <tbody>
+                {(itemMode === "top" ? data!.items! : [...data!.items!].reverse()).map((item) => (
+                  <tr key={item.name}>
+                    <td>{item.name}</td>
+                    <td>{item.qty}</td>
+                    <td>{formatInr(item.totalPaise)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
         <div className="pp-card upsell-card">

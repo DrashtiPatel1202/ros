@@ -11,6 +11,15 @@ import {
 } from "../api"
 import { PosKotScreen, PosRunningScreen } from "./PosOps"
 
+function formatTax(paise: number) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(paise / 100)
+}
+
 type CartLine = {
   key: string
   menuItemId: number
@@ -19,6 +28,8 @@ type CartLine = {
   dietary: "veg" | "non_veg" | "egg"
   qty: number
   note: string
+  variantId?: number
+  addonIds?: number[]
 }
 
 type Screen = "tables" | "billing" | "kots" | "running"
@@ -71,6 +82,9 @@ export function PosBilling() {
   const [kotNo, setKotNo] = useState<number | null>(null)
   const [slip, setSlip] = useState<Slip>(null)
   const [moveOpen, setMoveOpen] = useState(false)
+  const [picker, setPicker] = useState<PosBootstrap["items"][number] | null>(null)
+  const [pickVariant, setPickVariant] = useState<number | null>(null)
+  const [pickAddons, setPickAddons] = useState<number[]>([])
   const saveKey = useRef<string | null>(null)
   const inflight = useRef(false)
 
@@ -169,11 +183,22 @@ export function PosBilling() {
   }, [boot, categoryId, search])
 
   function addItem(item: PosBootstrap["items"][number]) {
+    if ((item.variants?.length ?? 0) > 0 || (item.addonGroups?.length ?? 0) > 0) {
+      setPicker(item)
+      setPickVariant(item.variants?.[0]?.id ?? null)
+      setPickAddons([])
+      return
+    }
+    pushItem(item, item.name, item.pricePaise)
+  }
+
+  function pushItem(item: PosBootstrap["items"][number], name: string, pricePaise: number, variantId?: number, addonIds?: number[]) {
     setError("")
     setNotice("")
     setLines((current) => {
+      const extras = (addonIds ?? []).slice().sort().join(",")
       const blank = boot?.settings.mergeDuplicateItems
-        ? current.find((line) => line.menuItemId === item.id && line.note === "")
+        ? current.find((line) => line.menuItemId === item.id && line.note === "" && (line.variantId ?? 0) === (variantId ?? 0) && (line.addonIds ?? []).slice().sort().join(",") === extras)
         : undefined
       if (blank) {
         if (blank.qty >= 99) return current
@@ -184,14 +209,37 @@ export function PosBilling() {
         {
           key: `${item.id}:${crypto.randomUUID()}`,
           menuItemId: item.id,
-          name: item.name,
-          pricePaise: item.pricePaise,
+          name,
+          pricePaise,
           dietary: item.dietary,
           qty: 1,
           note: "",
+          variantId,
+          addonIds,
         },
       ]
     })
+  }
+
+  function confirmPicker() {
+    if (!picker) return
+    const variant = picker.variants?.find((row) => row.id === pickVariant)
+    if ((picker.variants?.length ?? 0) > 0 && !variant) {
+      setError("Choose a variation.")
+      return
+    }
+    const chosen = (picker.addonGroups ?? []).flatMap((group) => group.items.filter((item) => pickAddons.includes(item.id)))
+    for (const group of picker.addonGroups ?? []) {
+      const count = group.items.filter((item) => pickAddons.includes(item.id)).length
+      if (count < group.minSelect || count > group.maxSelect) {
+        setError(`${group.name} needs ${group.minSelect} to ${group.maxSelect}.`)
+        return
+      }
+    }
+    const price = (variant?.pricePaise ?? picker.pricePaise) + chosen.reduce((sum, item) => sum + item.pricePaise, 0)
+    const name = `${picker.name}${variant ? ` (${variant.name})` : ""}${chosen.length ? ` + ${chosen.map((item) => item.name).join(", ")}` : ""}`
+    pushItem(picker, name, price, variant?.id, chosen.map((item) => item.id))
+    setPicker(null)
   }
 
   function updateLine(key: string, patch: Partial<CartLine>) {
@@ -234,6 +282,8 @@ export function PosBilling() {
         menuItemId: line.menuItemId,
         qty: line.qty,
         note: line.note.trim() || undefined,
+        variantId: line.variantId,
+        addonIds: line.addonIds,
       })),
     }
   }
@@ -429,6 +479,7 @@ export function PosBilling() {
               </div>
             </div>
             {boot.tables.some((table) => table.area === activeArea && table.placed) ? (
+              <>
               <div className="poss-canvas">
                 {boot.barriers.map((barrier) => (
                   <div key={barrier.id} className="fp-barrier" style={{ left: barrier.x, top: barrier.y, width: barrier.width, height: barrier.height }} />
@@ -449,6 +500,24 @@ export function PosBilling() {
                     </div>
                   ))}
               </div>
+              {boot.tables.some((table) => table.area === activeArea && !table.placed) && (
+                <div className="poss-floor-grid">
+                  {boot.tables
+                    .filter((table) => table.area === activeArea && !table.placed)
+                    .map((t) => (
+                      <div key={t.id} className={`floor-table ${t.status === "printed" ? "printed" : t.occupied ? "running" : "free"}`}>
+                        <button type="button" className="floor-table-main" onClick={() => startTable(t.tableNo, t.orderId)}>
+                          <strong>{t.tableNo}</strong>
+                          <small>{t.seats} seats</small>
+                          {t.occupied && t.totalPaise != null && <em>{formatInr(t.totalPaise)}</em>}
+                          {!t.occupied && <em>Blank</em>}
+                        </button>
+                        <CoverRow table={t} onOpen={startTable} />
+                      </div>
+                    ))}
+                </div>
+              )}
+              </>
             ) : (
               <div className="poss-floor-grid">
                 {boot.tables
@@ -621,8 +690,8 @@ export function PosBilling() {
               <dl className="poss-sum">
                 <div><dt>Sub total</dt><dd>{formatInr(bill.subtotalPaise)}</dd></div>
                 <div><dt>Discount</dt><dd>{formatInr(bill.discountPaise)}</dd></div>
-                <div><dt>CGST {halfRate}%</dt><dd>{formatInr(bill.cgstPaise)}</dd></div>
-                <div><dt>SGST {halfRate}%</dt><dd>{formatInr(bill.sgstPaise)}</dd></div>
+                <div><dt>CGST {halfRate}%</dt><dd>{formatTax(bill.cgstPaise)}</dd></div>
+                <div><dt>SGST {halfRate}%</dt><dd>{formatTax(bill.sgstPaise)}</dd></div>
               </dl>
               <div className="poss-grand">
                 <span>Grand total</span>
@@ -697,6 +766,48 @@ export function PosBilling() {
         </div>
       )}
 
+      {picker && (
+          <div className="poss-modal" role="dialog" aria-modal="true" aria-label="Item options">
+            <div className="poss-modal-card">
+              <header>
+                <h2>{picker.name}</h2>
+                <button type="button" onClick={() => setPicker(null)} aria-label="Close">×</button>
+              </header>
+              {(picker.variants ?? []).length > 0 && (
+                <div className="d-flex flex-wrap gap-2 mb-3">
+                  {picker.variants!.map((variant) => (
+                    <button key={variant.id} type="button" className={`poss-btn ${pickVariant === variant.id ? "blue" : "grey"}`} onClick={() => setPickVariant(variant.id)}>
+                      {variant.name} {formatInr(variant.pricePaise)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {(picker.addonGroups ?? []).map((group) => (
+                <div key={group.id} className="mb-3">
+                  <div className="fw-semibold">{group.name}</div>
+                  {group.items.map((addon) => (
+                    <label key={addon.id} className="d-flex gap-2 align-items-center">
+                      <input
+                        type="checkbox"
+                        checked={pickAddons.includes(addon.id)}
+                        onChange={(event) => {
+                          setPickAddons((current) => {
+                            if (!event.target.checked) return current.filter((id) => id !== addon.id)
+                            const inGroup = group.items.filter((item) => current.includes(item.id)).length
+                            if (inGroup >= group.maxSelect) return current
+                            return [...current, addon.id]
+                          })
+                        }}
+                      />
+                      <span>{addon.name} {addon.pricePaise ? formatInr(addon.pricePaise) : ""}</span>
+                    </label>
+                  ))}
+                </div>
+              ))}
+              <button type="button" className="poss-btn green" onClick={confirmPicker}>Add</button>
+            </div>
+          </div>
+        )}
       {settleOpen && (
         <div className="poss-modal" role="dialog" aria-modal="true" aria-label="Settle">
           <div className="poss-dialog">
@@ -757,7 +868,7 @@ export function PosBilling() {
               {slip === "bill" && (
                 <>
                   <p>Sub total {formatInr(bill.subtotalPaise)}</p>
-                  <p>CGST {formatInr(bill.cgstPaise)} · SGST {formatInr(bill.sgstPaise)}</p>
+                  <p>CGST {formatTax(bill.cgstPaise)} · SGST {formatTax(bill.sgstPaise)}</p>
                   <p className="thermal-total">Grand total {formatInr(bill.totalPaise)}</p>
                 </>
               )}

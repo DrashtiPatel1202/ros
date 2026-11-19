@@ -117,6 +117,12 @@ export async function ensureBillingAdmin() {
   }
 }
 
+export async function checkBillingPassword(adminId: number, password: string) {
+  const found = await pool.query<{ password_hash: string }>("SELECT password_hash FROM billing_admins WHERE id = $1", [adminId])
+  const hash = found.rows[0]?.password_hash
+  return Boolean(hash && verifyPassword(password, hash))
+}
+
 export async function registerBillingRoutes(app: FastifyInstance) {
   await ensureBillingAdmin()
 
@@ -262,6 +268,28 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       },
     ].filter((item) => !dismissed.has(item.id) && !(item.id === "fssai" && admin.rows[0]?.fssai))
 
+    const bounds = await pool.query<{ from_date: Date; to_date: Date; today: Date }>(
+      `WITH b AS (SELECT (now() AT TIME ZONE $2)::date AS today)
+       SELECT today,
+         CASE $1
+           WHEN 'yesterday' THEN today - 1
+           WHEN 'last_7' THEN today - 6
+           WHEN 'last_30' THEN today - 29
+           WHEN 'this_month' THEN date_trunc('month', today)::date
+           WHEN 'last_month' THEN (date_trunc('month', today) - interval '1 month')::date
+           ELSE today
+         END AS from_date,
+         CASE $1
+           WHEN 'yesterday' THEN today - 1
+           WHEN 'last_month' THEN (date_trunc('month', today)::date - 1)
+           ELSE today
+         END AS to_date
+       FROM b`,
+      [range, session.timezone],
+    )
+    const fromDate = bounds.rows[0]!.from_date
+    const toDate = bounds.rows[0]!.to_date
+    const today = bounds.rows[0]!.today
     const dateLabel =
       range === "yesterday"
         ? "Yesterday"
@@ -273,81 +301,177 @@ export async function registerBillingRoutes(app: FastifyInstance) {
               ? "This Month"
               : range === "last_month"
                 ? "Last Month"
-                : new Intl.DateTimeFormat("en-GB", {
-                    day: "numeric",
-                    month: "short",
-                  }).format(new Date())
+                : new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(today)
 
-    return {
-      sync: { posDaysAgo: 1545, ordersDaysAgo: 1624 },
-      sales: {
-        dateLabel,
-        totalPaise: 0,
-        orderCount: 0,
-        byTender: [
-          { label: "Cash", amountPaise: 0, share: 0 },
-          { label: "Card", amountPaise: 0, share: 0 },
-          { label: "Other", amountPaise: 0, share: 0 },
-          { label: "Due Payment", amountPaise: 0, share: 0 },
-          { label: "Not paid", amountPaise: 0, share: 0 },
-          { label: "Online", amountPaise: 0, share: 0 },
-        ],
-        byChannel: [
-          {
-            key: "dine_in",
-            label: "Dine In",
-            totalPaise: 0,
-            orderCount: 0,
-            share: 0,
-            minPaise: 0,
-            avgPaise: 0,
-            maxPaise: 0,
-            discountPaise: 0,
-            taxPaise: 0,
-            ttaMinutes: 0,
-          },
-          {
-            key: "pickup",
-            label: "Pick Up",
-            totalPaise: 0,
-            orderCount: 0,
-            share: 0,
-            minPaise: 0,
-            avgPaise: 0,
-            maxPaise: 0,
-            discountPaise: 0,
-            taxPaise: 0,
-            ttaMinutes: 0,
-          },
-          {
-            key: "delivery",
-            label: "Delivery",
-            totalPaise: 0,
-            orderCount: 0,
-            share: 0,
-            minPaise: 0,
-            avgPaise: 0,
-            maxPaise: 0,
-            discountPaise: 0,
-            taxPaise: 0,
-            ttaMinutes: 0,
-          },
-        ],
-        chart: {
-          categories: ["12 AM", "4 AM", "8 AM", "12 PM", "4 PM", "8 PM"],
+    const settled = await pool.query<{
+      order_type: string
+      payment_type: string
+      total_paise: string
+      discount_paise: string
+      tax_paise: string
+      paid_paise: string
+      customer_phone: string | null
+      business_date: Date
+      created_at: Date
+      settled_at: Date | null
+    }>(
+      `SELECT order_type, payment_type, total_paise, discount_paise, tax_paise, paid_paise,
+              customer_phone, business_date, created_at, settled_at
+       FROM orders
+       WHERE outlet_id = $1 AND status = 'settled' AND business_date BETWEEN $2 AND $3`,
+      [session.outletId, fromDate, toDate],
+    )
+    const rows = settled.rows
+    const totalPaise = rows.reduce((sum, row) => sum + Number(row.total_paise), 0)
+    const shareOf = (amount: number) => (totalPaise ? Math.round((amount / totalPaise) * 1000) / 10 : 0)
+    const tenderOf = (row: (typeof rows)[number]) => {
+      if (row.payment_type === "cash") return "Cash"
+      if (row.payment_type === "card") return "Card"
+      if (row.payment_type === "upi" || row.payment_type === "online") return "Online"
+      if (row.payment_type === "due") return "Due Payment"
+      if (row.payment_type === "not_paid") return "Not paid"
+      return "Other"
+    }
+    const tenderLabels = ["Cash", "Card", "Other", "Due Payment", "Not paid", "Online"]
+    const byTender = tenderLabels.map((label) => {
+      const amountPaise = rows.filter((row) => tenderOf(row) === label).reduce((sum, row) => sum + Number(row.total_paise), 0)
+      return { label, amountPaise, share: shareOf(amountPaise) }
+    })
+    const channelMeta = [
+      { key: "dine_in" as const, label: "Dine In" },
+      { key: "pickup" as const, label: "Pick Up" },
+      { key: "delivery" as const, label: "Delivery" },
+    ]
+    const byChannel = channelMeta.map((channel) => {
+      const mine = rows.filter((row) => row.order_type === channel.key)
+      const amounts = mine.map((row) => Number(row.total_paise))
+      const channelTotal = amounts.reduce((sum, amount) => sum + amount, 0)
+      const minutes = mine
+        .filter((row) => row.settled_at)
+        .map((row) => (new Date(row.settled_at!).getTime() - new Date(row.created_at).getTime()) / 60000)
+      return {
+        ...channel,
+        totalPaise: channelTotal,
+        orderCount: mine.length,
+        share: totalPaise ? Math.round((channelTotal / totalPaise) * 1000) / 10 : 0,
+        minPaise: amounts.length ? Math.min(...amounts) : 0,
+        avgPaise: amounts.length ? Math.round(channelTotal / amounts.length) : 0,
+        maxPaise: amounts.length ? Math.max(...amounts) : 0,
+        discountPaise: mine.reduce((sum, row) => sum + Number(row.discount_paise), 0),
+        taxPaise: mine.reduce((sum, row) => sum + Number(row.tax_paise), 0),
+        ttaMinutes: minutes.length ? Math.round(minutes.reduce((sum, value) => sum + value, 0) / minutes.length) : 0,
+      }
+    })
+    const singleDay = range === "today" || range === "yesterday"
+    const hourLabels = ["12 AM", "4 AM", "8 AM", "12 PM", "4 PM", "8 PM"]
+    const chart = singleDay
+      ? {
+          categories: hourLabels,
           dineIn: [0, 0, 0, 0, 0, 0],
           pickup: [0, 0, 0, 0, 0, 0],
           delivery: [0, 0, 0, 0, 0, 0],
-        },
+        }
+      : {
+          categories: [] as string[],
+          dineIn: [] as number[],
+          pickup: [] as number[],
+          delivery: [] as number[],
+        }
+    if (singleDay) {
+      for (const row of rows) {
+        const hour = new Date(row.settled_at ?? row.created_at).getHours()
+        const bucket = hour < 4 ? 0 : hour < 8 ? 1 : hour < 12 ? 2 : hour < 16 ? 3 : hour < 20 ? 4 : 5
+        const rupees = Number(row.total_paise) / 100
+        if (row.order_type === "dine_in") chart.dineIn[bucket] += rupees
+        else if (row.order_type === "pickup") chart.pickup[bucket] += rupees
+        else chart.delivery[bucket] += rupees
+      }
+    } else {
+      const dayKey = (value: Date) => {
+        const date = new Date(value)
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+      }
+      const days: string[] = []
+      for (let cursor = new Date(fromDate); cursor <= new Date(toDate); cursor.setDate(cursor.getDate() + 1)) {
+        days.push(dayKey(cursor))
+      }
+      chart.categories = days.map((day) => day.slice(8) + "/" + day.slice(5, 7))
+      const blank = () => days.map(() => 0)
+      chart.dineIn = blank()
+      chart.pickup = blank()
+      chart.delivery = blank()
+      for (const row of rows) {
+        const key = dayKey(new Date(row.business_date))
+        const index = days.indexOf(key)
+        if (index < 0) continue
+        const rupees = Number(row.total_paise) / 100
+        if (row.order_type === "dine_in") chart.dineIn[index] += rupees
+        else if (row.order_type === "pickup") chart.pickup[index] += rupees
+        else chart.delivery[index] += rupees
+      }
+    }
+    const phones = rows.map((row) => row.customer_phone?.trim()).filter((phone): phone is string => Boolean(phone))
+    const phoneCounts = new Map<string, number>()
+    for (const phone of phones) phoneCounts.set(phone, (phoneCounts.get(phone) ?? 0) + 1)
+    const repeat = [...phoneCounts.values()].filter((count) => count > 1).length
+    const onlineRows = await pool.query<{ client: string; total_paise: number; payment: string | null }>(
+      `SELECT o.client, o.total_paise, b.payment_type AS payment
+       FROM online_orders o
+       LEFT JOIN orders b ON b.id = o.order_id
+       WHERE o.outlet_id = $1 AND o.created_at::date BETWEEN $2 AND $3 AND o.status <> 'cancelled'`,
+      [session.outletId, fromDate, toDate],
+    )
+    const platforms = new Map<string, { name: string; orders: number; prepaid: number; cod: number; revenuePaise: number }>()
+    for (const row of onlineRows.rows) {
+      const current = platforms.get(row.client) ?? { name: row.client, orders: 0, prepaid: 0, cod: 0, revenuePaise: 0 }
+      current.orders += 1
+      current.revenuePaise += Number(row.total_paise)
+      if (row.payment === "cash" || row.payment == null) current.cod += 1
+      else current.prepaid += 1
+      platforms.set(row.client, current)
+    }
+    const cash = await pool.query<{ kind: string; amount: string }>(
+      `SELECT kind, COALESCE(SUM(amount_paise), 0)::bigint AS amount
+       FROM cash_entries
+       WHERE outlet_id = $1 AND removed_at IS NULL AND business_date BETWEEN $2 AND $3
+       GROUP BY kind`,
+      [session.outletId, fromDate, toDate],
+    )
+    const cashOf = (kind: string) => Number(cash.rows.find((row) => row.kind === kind)?.amount ?? 0)
+    const items = await pool.query<{ name: string; qty: string; total: string }>(
+      `SELECT oi.item_name AS name, SUM(oi.qty)::int AS qty, SUM(oi.line_total_paise)::bigint AS total
+       FROM order_items oi JOIN orders o ON o.id = oi.order_id
+       WHERE o.outlet_id = $1 AND o.status = 'settled' AND o.business_date BETWEEN $2 AND $3
+       GROUP BY oi.item_name ORDER BY SUM(oi.qty) DESC LIMIT 8`,
+      [session.outletId, fromDate, toDate],
+    )
+    const lastSale = await pool.query<{ business_date: Date | null }>(
+      `SELECT MAX(business_date) AS business_date FROM orders WHERE outlet_id = $1 AND status = 'settled'`,
+      [session.outletId],
+    )
+    const last = lastSale.rows[0]?.business_date
+    const daysAgo = last ? Math.max(0, Math.round((new Date(today).getTime() - new Date(last).getTime()) / 86400000)) : 0
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+
+    return {
+      sync: { posDaysAgo: daysAgo, ordersDaysAgo: daysAgo },
+      sales: { dateLabel, totalPaise, orderCount: rows.length, byTender, byChannel, chart },
+      online: {
+        totalOrders: onlineRows.rowCount ?? 0,
+        prepaid: [...platforms.values()].reduce((sum, row) => sum + row.prepaid, 0),
+        cod: [...platforms.values()].reduce((sum, row) => sum + row.cod, 0),
+        revenuePaise: [...platforms.values()].reduce((sum, row) => sum + row.revenuePaise, 0),
+        platforms: [...platforms.values()],
       },
-      online: { totalOrders: 0, prepaid: 0, cod: 0, revenuePaise: 0, platforms: [] },
+      items: items.rows.map((row) => ({ name: row.name, qty: Number(row.qty), totalPaise: Number(row.total) })),
       actionCenter: actions,
       snapshotReady: true,
-      snapshotDate: "18th November, 2026",
-      expenses: { expensePaise: 0, withdrawalPaise: 0, topupPaise: 0 },
-      retentionPct: 0,
+      snapshotDate: new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(yesterday),
+      expenses: { expensePaise: cashOf("expense"), withdrawalPaise: cashOf("withdrawal"), topupPaise: cashOf("topup") },
+      retentionPct: phoneCounts.size ? Math.round((repeat / phoneCounts.size) * 100) : 0,
       risk: {
-        unverifiedPaise: 0,
+        unverifiedPaise: rows.filter((row) => row.payment_type === "due" || Number(row.paid_paise) < Number(row.total_paise)).reduce((sum, row) => sum + Number(row.total_paise), 0),
         checks: ["payment matched to bill", "billed = collected", "every bill has payment"],
       },
     }

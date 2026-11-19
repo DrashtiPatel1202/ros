@@ -24,6 +24,7 @@ import { registerMenuAdminRoutes } from "./menuAdmin.ts"
 import { registerCatalogRoutes } from "./catalog.ts"
 import { registerInventoryRoutes } from "./inventory.ts"
 import { registerManagementRoutes } from "./management.ts"
+import { registerOperationsRoutes } from "./operations.ts"
 
 const app = Fastify({
   logger: { level: "info", redact: ["req.headers.cookie", "req.body.pin"] },
@@ -207,6 +208,7 @@ await registerMenuAdminRoutes(app)
 await registerCatalogRoutes(app)
 await registerInventoryRoutes(app)
 await registerManagementRoutes(app)
+await registerOperationsRoutes(app)
 await app.listen({ port, host: "127.0.0.1" })
 
 async function requireSession(request: FastifyRequest, reply: FastifyReply): Promise<Session | null> {
