@@ -1,20 +1,25 @@
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { api, type BillingSession } from "../api"
-import { EXPLORE_PRODUCTS, PRODUCT_SWITCHER, isImplemented } from "../nav"
+import { ApiError, api, type BillingSession } from "../api"
+import { EXPLORE_PRODUCTS, isImplemented } from "../nav"
 
 export function Header({
   session,
   onOpenDeviceMap,
   onSignOut,
+  onOutletChange,
 }: {
   session: BillingSession
   onOpenDeviceMap: () => void
   onSignOut: () => void
+  onOutletChange: (session: BillingSession) => void
 }) {
   const [exploreOpen, setExploreOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [switcherOpen, setSwitcherOpen] = useState(false)
+  const [kitchens, setKitchens] = useState<{ id: number; name: string; timezone: string; current: boolean }[]>([])
+  const [kitchenQuery, setKitchenQuery] = useState("")
+  const [switchError, setSwitchError] = useState("")
   const [unread, setUnread] = useState(0)
   const exploreRef = useRef<HTMLDivElement>(null)
 
@@ -30,6 +35,14 @@ export function Header({
     void api.notifications().then((data) => setUnread(data.unread)).catch(() => setUnread(0))
   }, [])
 
+  useEffect(() => {
+    void api.outlets().then((data) => setKitchens(data.rows)).catch(() => setKitchens([]))
+  }, [session.outlet.id])
+
+  const visibleKitchens = kitchens.filter((kitchen) =>
+    kitchen.name.toLowerCase().includes(kitchenQuery.trim().toLowerCase()),
+  )
+
   const initial = session.adminName.slice(0, 1).toUpperCase()
 
   return (
@@ -41,12 +54,50 @@ export function Header({
           <small className="ms-2">{session.outlet.brandCount} brands</small>
         </button>
         {switcherOpen && (
-          <div className="dropdown-menu show mt-2" style={{ display: "block", minWidth: 220 }}>
-            {PRODUCT_SWITCHER.filter((item) => isImplemented(item.path)).map((item) => (
-              <Link key={item.path} className="dropdown-item" to={item.path} onClick={() => setSwitcherOpen(false)}>
-                {item.label}
-              </Link>
-            ))}
+          <div className="outlet-menu" role="menu">
+            <input
+              className="form-control form-control-sm"
+              placeholder="Search kitchen"
+              value={kitchenQuery}
+              onChange={(e) => setKitchenQuery(e.target.value)}
+            />
+            {switchError && <p className="text-danger small mb-1">{switchError}</p>}
+            <div className="outlet-menu-list">
+              {visibleKitchens.map((kitchen) => (
+                <button
+                  key={kitchen.id}
+                  type="button"
+                  role="menuitem"
+                  className={kitchen.id === session.outlet.id ? "active" : ""}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (kitchen.id === session.outlet.id) {
+                      setSwitcherOpen(false)
+                      return
+                    }
+                    void api
+                      .switchOutlet(kitchen.id)
+                      .then((next) => {
+                        onOutletChange(next)
+                        window.location.reload()
+                      })
+                      .catch((caught) => {
+                        if (caught instanceof DOMException && caught.name === "AbortError") return
+                        setSwitchError(caught instanceof Error && caught.message ? caught.message : "Could not switch kitchen")
+                      })
+                  }}
+                >
+                  <i className="bi bi-shop" />
+                  <span>{kitchen.name}</span>
+                  {kitchen.id === session.outlet.id && <i className="bi bi-check-lg ms-auto" />}
+                </button>
+              ))}
+              {!kitchens.length && <p className="text-muted small mb-0 px-2">Loading kitchens…</p>}
+              {kitchens.length > 0 && !visibleKitchens.length && (
+                <p className="text-muted small mb-0 px-2">No kitchen matches.</p>
+              )}
+            </div>
           </div>
         )}
       </div>

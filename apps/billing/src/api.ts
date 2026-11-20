@@ -82,21 +82,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       "Billing API is not reachable. Run npm run dev:clone and open http://127.0.0.1:5174/.",
     )
   }
-  const payload = (await response.json().catch(() => null)) as
-    | { error?: { code?: string; message?: string } }
-    | null
+  const payload = (await response.json().catch(() => null)) as {
+    message?: string
+    error?: { code?: string; message?: string } | string
+  } | null
   if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      payload?.error?.code ?? "ERROR",
-      payload?.error?.message ?? "Something went wrong. Try again.",
-    )
+    const nested = payload?.error
+    const message =
+      nested && typeof nested === "object" && nested.message
+        ? nested.message
+        : typeof payload?.message === "string" && payload.message
+          ? payload.message
+          : "Something went wrong. Try again."
+    const code = nested && typeof nested === "object" && nested.code ? nested.code : "ERROR"
+    throw new ApiError(response.status, code, message)
   }
   return payload as T
 }
 
 export const api = {
   session: () => request<BillingSession>("/api/v1/billing/session"),
+  outlets: () =>
+    request<{ rows: { id: number; name: string; timezone: string; current: boolean }[] }>("/api/v1/billing/outlets"),
+  switchOutlet: (outletId: number) =>
+    request<BillingSession>("/api/v1/billing/session/outlet", {
+      method: "POST",
+      body: JSON.stringify({ outletId }),
+    }),
   identify: (identifier: string) =>
     request<{ ok: true; maskedHint: string }>("/api/v1/billing/session/identify", {
       method: "POST",

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { formatInr, summarize } from "@rea/pricing"
 import { ApiError, api, ORDER_TYPE_LABEL, type Draft, type MenuItem, type Session } from "./api"
+import { randomId } from "./randomId"
 
 export type Notice = { text: string; orderId: number }
 
@@ -107,7 +108,7 @@ export function Counter({
       return [
         ...current,
         {
-          key: `${item.id}:${crypto.randomUUID()}`,
+          key: `${item.id}:${randomId()}`,
           menuItemId: item.id,
           name: item.name,
           pricePaise: item.pricePaise,
@@ -144,7 +145,7 @@ export function Counter({
       if (editingId !== undefined && existing.data) {
         return api.updateOrder(editingId, { ...draft, version: existing.data.version })
       }
-      saveKey.current ??= crypto.randomUUID()
+      saveKey.current ??= randomId()
       return api.createOrder(draft, saveKey.current)
     },
     onSuccess: (saved) => {

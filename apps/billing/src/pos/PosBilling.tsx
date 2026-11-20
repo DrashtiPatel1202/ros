@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { randomId } from "../randomId"
 import { useSearchParams } from "react-router-dom"
 import {
   ApiError,
@@ -208,7 +209,7 @@ export function PosBilling() {
       return [
         ...current,
         {
-          key: `${item.id}:${crypto.randomUUID()}`,
+          key: `${item.id}:${randomId()}`,
           menuItemId: item.id,
           name,
           pricePaise,
@@ -323,7 +324,7 @@ export function PosBilling() {
               action,
               paymentType: payment?.paymentType,
               paidPaise: payment?.paidPaise,
-              idempotencyKey: (saveKey.current ??= crypto.randomUUID()),
+              idempotencyKey: (saveKey.current ??= randomId()),
             })
       saveKey.current = null
       setOrderId(saved.id)

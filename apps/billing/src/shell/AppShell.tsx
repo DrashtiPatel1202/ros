@@ -8,9 +8,11 @@ import { Sidebar } from "./Sidebar"
 export function AppShell({
   session,
   onSignOut,
+  onOutletChange,
 }: {
   session: BillingSession
   onSignOut: () => void
+  onOutletChange: (session: BillingSession) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
   const [deviceOpen, setDeviceOpen] = useState(false)
@@ -22,9 +24,10 @@ export function AppShell({
         session={session}
         onOpenDeviceMap={() => setDeviceOpen(true)}
         onSignOut={onSignOut}
+        onOutletChange={onOutletChange}
       />
       <main id="content">
-        <Outlet />
+        <Outlet key={session.outlet.id} />
       </main>
       {deviceOpen && (
         <DeviceMapModal outletName={session.outlet.name} onClose={() => setDeviceOpen(false)} />

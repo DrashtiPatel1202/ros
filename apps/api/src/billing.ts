@@ -105,6 +105,14 @@ export async function ensureBillingAdmin() {
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `)
+  await pool.query(
+    `INSERT INTO outlets (name, timezone, currency, tax_rate_bps)
+     SELECT 'Harbour Cloud Kitchen', timezone, currency, tax_rate_bps
+     FROM outlets
+     WHERE NOT EXISTS (SELECT 1 FROM outlets WHERE name = 'Harbour Cloud Kitchen')
+     ORDER BY id
+     LIMIT 1`,
+  )
   const existing = await pool.query("SELECT id FROM billing_admins WHERE email = $1", [DEMO_EMAIL])
   if (!existing.rowCount) {
     const outlet = await pool.query<{ id: string }>("SELECT id FROM outlets ORDER BY id LIMIT 1")
@@ -129,6 +137,41 @@ export async function registerBillingRoutes(app: FastifyInstance) {
   app.get("/api/v1/billing/session", async (request, reply) => {
     const session = await requireBilling(request, reply)
     if (!session) return
+    return publicSession(session)
+  })
+
+  app.get("/api/v1/billing/outlets", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const rows = await pool.query<{ id: string; name: string; timezone: string }>(
+      "SELECT id, name, timezone FROM outlets ORDER BY name",
+    )
+    return {
+      rows: rows.rows.map((row) => ({
+        id: Number(row.id),
+        name: row.name,
+        timezone: row.timezone,
+        current: Number(row.id) === session.outletId,
+      })),
+    }
+  })
+
+  app.post("/api/v1/billing/session/outlet", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const parsed = z.object({ outletId: z.number().int().positive() }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Choose a kitchen.")
+    const outlet = await pool.query<{ id: string; name: string; timezone: string }>(
+      "SELECT id, name, timezone FROM outlets WHERE id = $1",
+      [parsed.data.outletId],
+    )
+    if (!outlet.rowCount) return sendError(reply, 404, "NOT_FOUND", "That kitchen is not available.")
+    session.outletId = Number(outlet.rows[0]!.id)
+    session.outletName = outlet.rows[0]!.name
+    session.timezone = outlet.rows[0]!.timezone
+    await pool.query("UPDATE billing_admins SET outlet_id = $2 WHERE id = $1", [session.adminId, session.outletId])
+    const token = readToken(request)
+    if (token) await redis.set(`billing-session:${token}`, JSON.stringify(session), "EX", 60 * 60 * 12)
     return publicSession(session)
   })
 

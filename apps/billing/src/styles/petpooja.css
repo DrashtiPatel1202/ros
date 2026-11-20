@@ -116,6 +116,32 @@ a:hover { text-decoration: underline; }
   font-weight: 500;
 }
 .outlet-switch small { color: var(--pp-muted); font-weight: 400; }
+.outlet-switch > .btn { color: inherit; font-weight: 600; }
+.outlet-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 280px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--pp-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+}
+.outlet-menu-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 280px; overflow: auto; }
+.outlet-menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: left;
+}
+.outlet-menu-list button.active, .outlet-menu-list button:hover { background: #eef4ff; }
 .header-actions {
   margin-left: auto;
   display: flex;

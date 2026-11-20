@@ -114,7 +114,11 @@ export function App() {
       <TitleSync />
       <Routes>
         <Route path="/pos/billing" element={<PosBilling />} />
-        <Route element={<AppShell session={session} onSignOut={() => void signOut()} />}>
+        <Route
+          element={
+            <AppShell session={session} onSignOut={() => void signOut()} onOutletChange={setSession} />
+          }
+        >
           <Route path="/" element={<Navigate to="/users/dashboard" replace />} />
           <Route path="/users/dashboard" element={<Dashboard />} />
           <Route
