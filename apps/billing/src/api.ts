@@ -59,15 +59,29 @@ export type DashboardData = {
   risk: { unverifiedPaise: number; checks: string[] }
 }
 
+export function isAbortedRequest(caught: unknown) {
+  return caught instanceof DOMException && caught.name === "AbortError"
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: "include",
-    headers: {
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-      ...init?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(path, {
+      ...init,
+      credentials: "include",
+      headers: {
+        ...(init?.body ? { "content-type": "application/json" } : {}),
+        ...init?.headers,
+      },
+    })
+  } catch (caught) {
+    if (isAbortedRequest(caught)) throw caught
+    throw new ApiError(
+      0,
+      "NETWORK",
+      "Billing API is not reachable. Run npm run dev:clone and open http://127.0.0.1:5174/.",
+    )
+  }
   const payload = (await response.json().catch(() => null)) as
     | { error?: { code?: string; message?: string } }
     | null
@@ -179,10 +193,28 @@ export const api = {
     }),
   deleteAreaCharge: (id: number) =>
     request<{ ok: true }>(`/api/v1/billing/config/area-charges/${id}`, { method: "DELETE" }),
-  saveTable: (body: { area: string; tableNo: string; seats: number }) =>
+  floorPlans: () =>
+    request<{ rows: { id: number; name: string; active: boolean; createdAt: string }[] }>(
+      "/api/v1/billing/config/floor-plans",
+    ),
+  addFloorPlan: (name: string) =>
+    request<{ id: number; name: string; active: boolean; createdAt: string }>("/api/v1/billing/config/floor-plans", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateFloorPlan: (id: number, body: { name?: string; active?: boolean }) =>
+    request<{ ok: true }>(`/api/v1/billing/config/floor-plans/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteFloorPlan: (id: number) =>
+    request<{ ok: true }>(`/api/v1/billing/config/floor-plans/${id}`, { method: "DELETE" }),
+  saveTable: (body: { floorPlanId: number; area: string; tableNo: string; seats: number }) =>
     request<{ ok: true }>("/api/v1/billing/config/tables", { method: "POST", body: JSON.stringify(body) }),
-  floorPlan: () =>
+  floorPlan: (floorPlanId: number) =>
     request<{
+      floorPlanId: number
+      floorPlanName: string
       tables: {
         id: number
         area: string
@@ -197,8 +229,9 @@ export const api = {
         placed: boolean
       }[]
       barriers: { id: number; x: number; y: number; width: number; height: number }[]
-    }>("/api/v1/billing/config/floor"),
+    }>(`/api/v1/billing/config/floor?floorPlanId=${floorPlanId}`),
   saveFloor: (body: {
+    floorPlanId: number
     tables: {
       id: number
       x: number

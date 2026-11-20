@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { ApiError } from "../api"
+import { ApiError, isAbortedRequest } from "../api"
 
 export function MgmtShell({ crumb, title, children }: { crumb: string; title: string; children: ReactNode }) {
   return (
@@ -12,6 +12,7 @@ export function MgmtShell({ crumb, title, children }: { crumb: string; title: st
 }
 
 export function errText(caught: unknown, fallback: string) {
+  if (isAbortedRequest(caught)) return ""
   return caught instanceof ApiError ? caught.message : caught instanceof Error ? caught.message : fallback
 }
 

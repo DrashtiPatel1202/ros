@@ -1,5 +1,7 @@
 import pg from "pg"
+import { loadRepoEnv } from "./loadEnv.ts"
 
+loadRepoEnv()
 const url = process.env.DATABASE_URL ?? "postgres://localhost:5432/rea_pos"
 
 export const pool = new pg.Pool({

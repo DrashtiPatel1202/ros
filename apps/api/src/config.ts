@@ -151,8 +151,37 @@ function mergeSettings(saved: unknown): OutletSettings {
 }
 
 export async function ensureConfigSchema() {
-  const sqlPath = join(dirname(fileURLToPath(import.meta.url)), "../sql/003_config.sql")
-  await pool.query(readFileSync(sqlPath, "utf8"))
+  const base = dirname(fileURLToPath(import.meta.url))
+  await pool.query(readFileSync(join(base, "../sql/003_config.sql"), "utf8"))
+  await pool.query(readFileSync(join(base, "../sql/004_floor_plans.sql"), "utf8"))
+}
+
+/** One default floor per outlet; backfill tables/barriers missing floor_plan_id. */
+export async function ensureOutletFloorPlan(outletId: number): Promise<number> {
+  await ensureConfigSchema()
+  const existing = await pool.query<{ id: string }>(
+    "SELECT id FROM floor_plans WHERE outlet_id=$1 ORDER BY id LIMIT 1",
+    [outletId],
+  )
+  let floorPlanId: number
+  if (!existing.rowCount) {
+    const row = await pool.query<{ id: string }>(
+      `INSERT INTO floor_plans (outlet_id, name) VALUES ($1, 'Floor Plan') RETURNING id`,
+      [outletId],
+    )
+    floorPlanId = Number(row.rows[0]!.id)
+  } else {
+    floorPlanId = Number(existing.rows[0]!.id)
+  }
+  await pool.query("UPDATE pos_tables SET floor_plan_id=$1 WHERE outlet_id=$2 AND floor_plan_id IS NULL", [
+    floorPlanId,
+    outletId,
+  ])
+  await pool.query("UPDATE floor_barriers SET floor_plan_id=$1 WHERE outlet_id=$2 AND floor_plan_id IS NULL", [
+    floorPlanId,
+    outletId,
+  ])
+  return floorPlanId
 }
 
 export async function loadOutletSettings(outletId: number): Promise<OutletSettings> {
@@ -386,20 +415,119 @@ export async function registerConfigRoutes(app: FastifyInstance) {
     return { ok: true }
   })
 
-  app.get("/api/v1/billing/config/floor", async (request, reply) => {
+  app.get("/api/v1/billing/config/floor-plans", async (request, reply) => {
     const session = await requireBilling(request, reply)
     if (!session) return
-    const tables = await pool.query(
-      `SELECT id, area_name, table_no, seats, pos_x, pos_y, width, height, shape, text_size, placed
-       FROM pos_tables WHERE outlet_id = $1 AND is_active
-       ORDER BY area_name, table_no`,
-      [session.outletId],
-    )
-    const barriers = await pool.query(
-      "SELECT id, pos_x, pos_y, width, height FROM floor_barriers WHERE outlet_id = $1 ORDER BY id",
+    await ensureOutletFloorPlan(session.outletId)
+    const rows = await pool.query<{ id: string; name: string; is_active: boolean; created_at: Date }>(
+      `SELECT id, name, is_active, created_at FROM floor_plans WHERE outlet_id=$1 ORDER BY created_at, id`,
       [session.outletId],
     )
     return {
+      rows: rows.rows.map((row) => ({
+        id: Number(row.id),
+        name: row.name,
+        active: row.is_active,
+        createdAt: row.created_at.toISOString(),
+      })),
+    }
+  })
+
+  app.post("/api/v1/billing/config/floor-plans", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const parsed = z.object({ name: z.string().trim().min(1).max(60) }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Floor plan name is required.")
+    const row = await pool.query<{ id: string; name: string; is_active: boolean; created_at: Date }>(
+      `INSERT INTO floor_plans (outlet_id, name) VALUES ($1,$2)
+       ON CONFLICT (outlet_id, name) DO UPDATE SET is_active=true
+       RETURNING id, name, is_active, created_at`,
+      [session.outletId, parsed.data.name],
+    )
+    return {
+      id: Number(row.rows[0]!.id),
+      name: row.rows[0]!.name,
+      active: row.rows[0]!.is_active,
+      createdAt: row.rows[0]!.created_at.toISOString(),
+    }
+  })
+
+  app.put("/api/v1/billing/config/floor-plans/:id", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const id = Number((request.params as { id: string }).id)
+    const parsed = z
+      .object({ name: z.string().trim().min(1).max(60).optional(), active: z.boolean().optional() })
+      .safeParse(request.body)
+    if (!parsed.success || (!parsed.data.name && parsed.data.active === undefined)) {
+      return sendError(reply, 400, "VALIDATION", "Nothing to update.")
+    }
+    if (parsed.data.name) {
+      await pool.query("UPDATE floor_plans SET name=$3 WHERE id=$1 AND outlet_id=$2", [
+        id,
+        session.outletId,
+        parsed.data.name,
+      ])
+    }
+    if (parsed.data.active !== undefined) {
+      await pool.query("UPDATE floor_plans SET is_active=$3 WHERE id=$1 AND outlet_id=$2", [
+        id,
+        session.outletId,
+        parsed.data.active,
+      ])
+    }
+    return { ok: true as const }
+  })
+
+  app.delete("/api/v1/billing/config/floor-plans/:id", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const id = Number((request.params as { id: string }).id)
+    const count = await pool.query<{ n: string }>(
+      "SELECT COUNT(*)::text AS n FROM floor_plans WHERE outlet_id=$1",
+      [session.outletId],
+    )
+    if (Number(count.rows[0]!.n) <= 1) {
+      return sendError(reply, 400, "VALIDATION", "At least one floor plan must remain.")
+    }
+    const tables = await pool.query(
+      "SELECT 1 FROM pos_tables WHERE floor_plan_id=$1 AND outlet_id=$2 AND is_active LIMIT 1",
+      [id, session.outletId],
+    )
+    if (tables.rowCount) {
+      return sendError(reply, 400, "VALIDATION", "Remove or move tables before deleting this floor plan.")
+    }
+    await pool.query("DELETE FROM floor_barriers WHERE floor_plan_id=$1 AND outlet_id=$2", [id, session.outletId])
+    await pool.query("DELETE FROM floor_plans WHERE id=$1 AND outlet_id=$2", [id, session.outletId])
+    return { ok: true as const }
+  })
+
+  app.get("/api/v1/billing/config/floor", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const q = request.query as { floorPlanId?: string }
+    let floorPlanId = Number(q.floorPlanId)
+    if (!Number.isFinite(floorPlanId) || floorPlanId <= 0) {
+      floorPlanId = await ensureOutletFloorPlan(session.outletId)
+    }
+    const meta = await pool.query<{ name: string }>("SELECT name FROM floor_plans WHERE id=$1 AND outlet_id=$2", [
+      floorPlanId,
+      session.outletId,
+    ])
+    if (!meta.rowCount) return sendError(reply, 404, "NOT_FOUND", "Floor plan not found.")
+    const tables = await pool.query(
+      `SELECT id, area_name, table_no, seats, pos_x, pos_y, width, height, shape, text_size, placed
+       FROM pos_tables WHERE outlet_id = $1 AND floor_plan_id = $2 AND is_active
+       ORDER BY area_name, table_no`,
+      [session.outletId, floorPlanId],
+    )
+    const barriers = await pool.query(
+      "SELECT id, pos_x, pos_y, width, height FROM floor_barriers WHERE outlet_id = $1 AND floor_plan_id = $2 ORDER BY id",
+      [session.outletId, floorPlanId],
+    )
+    return {
+      floorPlanId,
+      floorPlanName: meta.rows[0]!.name,
       tables: tables.rows.map((row) => ({
         id: Number(row.id),
         area: row.area_name as string,
@@ -429,6 +557,7 @@ export async function registerConfigRoutes(app: FastifyInstance) {
     const shape = z.enum(["circle", "square", "diamond", "arch", "rect", "oval"])
     const parsed = z
       .object({
+        floorPlanId: z.number().int().positive(),
         tables: z.array(
           z.object({
             id: z.number().int().positive(),
@@ -452,6 +581,11 @@ export async function registerConfigRoutes(app: FastifyInstance) {
       })
       .safeParse(request.body)
     if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Check the floor plan and try again.")
+    const owned = await pool.query("SELECT 1 FROM floor_plans WHERE id=$1 AND outlet_id=$2", [
+      parsed.data.floorPlanId,
+      session.outletId,
+    ])
+    if (!owned.rowCount) return sendError(reply, 404, "NOT_FOUND", "Floor plan not found.")
     const client = await pool.connect()
     try {
       await client.query("BEGIN")
@@ -459,15 +593,29 @@ export async function registerConfigRoutes(app: FastifyInstance) {
         await client.query(
           `UPDATE pos_tables
            SET pos_x=$3, pos_y=$4, width=$5, height=$6, shape=$7, text_size=$8, placed=$9
-           WHERE id=$1 AND outlet_id=$2`,
-          [table.id, session.outletId, table.x, table.y, table.width, table.height, table.shape, table.textSize, table.placed],
+           WHERE id=$1 AND outlet_id=$2 AND floor_plan_id=$10`,
+          [
+            table.id,
+            session.outletId,
+            table.x,
+            table.y,
+            table.width,
+            table.height,
+            table.shape,
+            table.textSize,
+            table.placed,
+            parsed.data.floorPlanId,
+          ],
         )
       }
-      await client.query("DELETE FROM floor_barriers WHERE outlet_id = $1", [session.outletId])
+      await client.query("DELETE FROM floor_barriers WHERE outlet_id = $1 AND floor_plan_id = $2", [
+        session.outletId,
+        parsed.data.floorPlanId,
+      ])
       for (const barrier of parsed.data.barriers) {
         await client.query(
-          `INSERT INTO floor_barriers (outlet_id, pos_x, pos_y, width, height) VALUES ($1,$2,$3,$4,$5)`,
-          [session.outletId, barrier.x, barrier.y, barrier.width, barrier.height],
+          `INSERT INTO floor_barriers (outlet_id, floor_plan_id, pos_x, pos_y, width, height) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [session.outletId, parsed.data.floorPlanId, barrier.x, barrier.y, barrier.width, barrier.height],
         )
       }
       await client.query("COMMIT")
@@ -485,16 +633,23 @@ export async function registerConfigRoutes(app: FastifyInstance) {
     if (!session) return
     const parsed = z
       .object({
+        floorPlanId: z.number().int().positive(),
         area: z.string().trim().min(1).max(40),
         tableNo: z.string().trim().min(1).max(20),
         seats: z.number().int().min(1).max(30),
       })
       .safeParse(request.body)
     if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Area, table number and seats are required.")
+    const owned = await pool.query("SELECT 1 FROM floor_plans WHERE id=$1 AND outlet_id=$2", [
+      parsed.data.floorPlanId,
+      session.outletId,
+    ])
+    if (!owned.rowCount) return sendError(reply, 404, "NOT_FOUND", "Floor plan not found.")
     await pool.query(
-      `INSERT INTO pos_tables (outlet_id, area_name, table_no, seats)
-       VALUES ($1,$2,$3,$4) ON CONFLICT (outlet_id, table_no) DO UPDATE SET area_name=$2, seats=$4, is_active=true`,
-      [session.outletId, parsed.data.area, parsed.data.tableNo, parsed.data.seats],
+      `INSERT INTO pos_tables (outlet_id, floor_plan_id, area_name, table_no, seats)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (floor_plan_id, table_no) DO UPDATE SET area_name=$3, seats=$5, is_active=true`,
+      [session.outletId, parsed.data.floorPlanId, parsed.data.area, parsed.data.tableNo, parsed.data.seats],
     )
     return { ok: true }
   })

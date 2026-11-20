@@ -9,6 +9,7 @@ import { AllOrders } from "./pages/AllOrders"
 import { ConfigHub, ConfigSection } from "./pages/Configuration"
 import { AreaCharges, DeliveryDistances, SubOrderTypes } from "./pages/ConfigLists"
 import { FloorPlan } from "./pages/FloorPlan"
+import { FloorPlanList } from "./pages/FloorPlanList"
 import { KotList } from "./pages/KotList"
 import { AllInOneMenu, MenuHome, MenuOnOff } from "./pages/Menu"
 import { InventoryPage } from "./pages/Inventory"
@@ -166,7 +167,9 @@ export function App() {
           <Route path="/items/sub_order_type_list" element={<SubOrderTypes />} />
           <Route path="/items/delivery_distance_list" element={<DeliveryDistances />} />
           <Route path="/users/area_wise_delivery_charge_list" element={<AreaCharges />} />
-          <Route path="/users/floor_plan" element={<FloorPlan />} />
+          <Route path="/users/floor_plan" element={<FloorPlanList />} />
+          <Route path="/users/floor_plan/1" element={<FloorPlanList />} />
+          <Route path="/users/floor_plan/design/:floorPlanId" element={<FloorPlan />} />
           <Route path="/items/kot_list" element={<KotList />} />
           <Route path="/menus/menu_management" element={<MenuHome />} />
           <Route path="/menus/menu_new/all" element={<AllInOneMenu />} />

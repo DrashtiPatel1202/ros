@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useParams } from "react-router-dom"
 import { ApiError, api, type TableShape } from "../api"
 
 type TableDraft = {
@@ -36,6 +36,9 @@ function byTable(a: TableDraft, b: TableDraft) {
 }
 
 export function FloorPlan() {
+  const { floorPlanId: floorPlanIdParam } = useParams<{ floorPlanId: string }>()
+  const floorPlanId = Number(floorPlanIdParam)
+  const [floorPlanName, setFloorPlanName] = useState("")
   const [tables, setTables] = useState<TableDraft[]>([])
   const [barriers, setBarriers] = useState<BarrierDraft[]>([])
   const [selected, setSelected] = useState<{ kind: "table" | "barrier"; id: string } | null>(null)
@@ -48,7 +51,9 @@ export function FloorPlan() {
   const canvasRef = useRef<HTMLDivElement>(null)
 
   async function load() {
-    const data = await api.floorPlan()
+    if (!Number.isFinite(floorPlanId) || floorPlanId <= 0) throw new Error("Invalid floor plan")
+    const data = await api.floorPlan(floorPlanId)
+    setFloorPlanName(data.floorPlanName)
     setTables(
       data.tables.map((table) => ({
         ...table,
@@ -61,7 +66,7 @@ export function FloorPlan() {
 
   useEffect(() => {
     void load().catch((caught) => setError(caught instanceof Error ? caught.message : "Could not load the floor"))
-  }, [])
+  }, [floorPlanId])
 
   const areas = [...new Set(tables.map((table) => table.area))]
   const current = selected?.kind === "table" ? tables.find((table) => String(table.id) === selected.id) : null
@@ -113,9 +118,10 @@ export function FloorPlan() {
       <div className="fp-top">
         <div>
           <div className="breadcrumb-pp">
-            <Link to="/users/res_new/1">Configuration</Link> › Floor Plan
+            <Link to="/users/res_new/1">Configuration</Link> › <Link to="/users/floor_plan">Floor Plan</Link> ›{" "}
+            {floorPlanName || "Design"}
           </div>
-          <h1 className="page-title">Floor Plan</h1>
+          <h1 className="page-title">{floorPlanName || "Floor Plan"}</h1>
         </div>
         <div className="fp-actions">
           <button type="button" className="btn btn-outline-secondary" onClick={() => setPreview((value) => !value)}>
@@ -131,6 +137,7 @@ export function FloorPlan() {
               setError("")
               void api
                 .saveFloor({
+                  floorPlanId,
                   tables: tables.map((table) => ({
                     id: table.id,
                     x: table.x,
@@ -154,7 +161,7 @@ export function FloorPlan() {
           >
             Save Floor Plan
           </button>
-          <Link className="btn btn-outline-secondary" to="/users/res_new/1">
+          <Link className="btn btn-outline-secondary" to="/users/floor_plan">
             ‹ Back
           </Link>
         </div>
@@ -168,7 +175,7 @@ export function FloorPlan() {
             onSubmit={(e) => {
               e.preventDefault()
               void api
-                .saveTable({ area: areaName, tableNo, seats: Number(seats) || 4 })
+                .saveTable({ floorPlanId, area: areaName, tableNo, seats: Number(seats) || 4 })
                 .then(() => {
                   setTableNo("")
                   return load()

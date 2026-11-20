@@ -142,13 +142,16 @@ async function claimGuestLabel(
 }
 
 export async function ensurePosSchema() {
-  const sqlPath = join(dirname(fileURLToPath(import.meta.url)), "../sql/002_pos.sql")
-  await pool.query(readFileSync(sqlPath, "utf8"))
+  const base = dirname(fileURLToPath(import.meta.url))
+  await pool.query(readFileSync(join(base, "../sql/002_pos.sql"), "utf8"))
+  await pool.query(readFileSync(join(base, "../sql/004_floor_plans.sql"), "utf8"))
   const tables = await pool.query("SELECT 1 FROM pos_tables LIMIT 1")
   if (!tables.rowCount) {
     const outlet = await pool.query<{ id: string }>("SELECT id FROM outlets ORDER BY id LIMIT 1")
     if (outlet.rowCount) {
-      const outletId = outlet.rows[0]!.id
+      const outletId = Number(outlet.rows[0]!.id)
+      const { ensureOutletFloorPlan } = await import("./config.ts")
+      const floorPlanId = await ensureOutletFloorPlan(outletId)
       for (const [area, nos] of [
         ["AC", ["1", "2", "3", "4"]],
         ["Non AC", ["5", "6", "7", "8"]],
@@ -156,9 +159,9 @@ export async function ensurePosSchema() {
       ] as const) {
         for (const tableNo of nos) {
           await pool.query(
-            `INSERT INTO pos_tables (outlet_id, area_name, table_no, seats)
-             VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-            [outletId, area, tableNo, area === "Family" ? 6 : 4],
+            `INSERT INTO pos_tables (outlet_id, floor_plan_id, area_name, table_no, seats)
+             VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+            [outletId, floorPlanId, area, tableNo, area === "Family" ? 6 : 4],
           )
         }
       }
@@ -467,9 +470,11 @@ export async function registerPosRoutes(app: FastifyInstance) {
       text_size: number
       placed: boolean
     }>(
-      `SELECT id, area_name, table_no, seats, pos_x, pos_y, width, height, shape, text_size, placed
-       FROM pos_tables
-       WHERE outlet_id = $1 AND is_active ORDER BY area_name, table_no`,
+      `SELECT t.id, t.area_name, t.table_no, t.seats, t.pos_x, t.pos_y, t.width, t.height, t.shape, t.text_size, t.placed,
+              fp.name AS floor_plan_name
+       FROM pos_tables t
+       JOIN floor_plans fp ON fp.id = t.floor_plan_id AND fp.is_active
+       WHERE t.outlet_id = $1 AND t.is_active ORDER BY fp.name, t.area_name, t.table_no`,
       [session.outletId],
     )
     const occupied = await pool.query<{
@@ -488,7 +493,10 @@ export async function registerPosRoutes(app: FastifyInstance) {
     )
     const busy = new Map(occupied.rows.map((r) => [r.table_label, r]))
     const barriers = await pool.query<{ id: string; pos_x: number; pos_y: number; width: number; height: number }>(
-      "SELECT id, pos_x, pos_y, width, height FROM floor_barriers WHERE outlet_id = $1 ORDER BY id",
+      `SELECT b.id, b.pos_x, b.pos_y, b.width, b.height
+       FROM floor_barriers b
+       JOIN floor_plans fp ON fp.id = b.floor_plan_id AND fp.is_active
+       WHERE b.outlet_id = $1 ORDER BY b.id`,
       [session.outletId],
     )
     const discounts = await pool.query<{

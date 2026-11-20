@@ -615,6 +615,28 @@ a:hover { text-decoration: underline; }
 .floor-covers button.printed { background: #e8f1fd; border-color: #1372e8; color: #1372e8; }
 .floor-covers button.add { color: #2f6fed; }
 
+.floor-plan-wrapper { max-width: 100%; }
+.fp-list-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+.fp-list-card { padding: 0; overflow: hidden; }
+.fp-list-table thead th {
+  background: #f8f9fb;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--pp-border);
+  white-space: nowrap;
+}
+.fp-list-name { font-weight: 600; text-decoration: none; color: #2f6fed; }
+.fp-list-name:hover { text-decoration: underline; }
+.fp-list-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.fp-list-actions .btn { width: 34px; height: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.fp-list-create { padding: 16px; margin-bottom: 16px; }
 .floor-designer { display: flex; flex-direction: column; min-height: calc(100vh - 88px); }
 .fp-top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .fp-actions { display: flex; gap: 8px; flex-wrap: wrap; }

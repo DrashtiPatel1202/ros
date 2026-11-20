@@ -4,7 +4,9 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import pg from "pg"
 import { hashPin } from "./crypto.ts"
+import { loadRepoEnv } from "./loadEnv.ts"
 
+loadRepoEnv()
 const databaseUrl = process.env.DATABASE_URL ?? "postgres://localhost:5432/rea_pos"
 const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "")
 if (!/^[a-z][a-z0-9_]*$/.test(databaseName)) throw new Error("Refusing an unsafe database name")

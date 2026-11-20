@@ -227,6 +227,7 @@ export const IMPLEMENTED_PATHS = new Set([
   "/items/delivery_distance_list",
   "/users/area_wise_delivery_charge_list",
   "/users/floor_plan",
+  "/users/floor_plan/1",
   "/items/kot_list",
   "/menus/menu_management",
   "/menus/menu_new/all",
@@ -296,6 +297,8 @@ export function titleForPath(pathname: string): string {
   if (normalized.startsWith("/users/res_timing")) return "Outlet Timings"
   if (normalized.startsWith("/users/res_cpt_nqr")) return "Payment"
   if (normalized.startsWith("/users/res_invoice_list")) return "Invoice Sequence"
+  if (normalized.startsWith("/users/floor_plan/design")) return "Floor Plan"
+  if (normalized === "/users/floor_plan" || normalized === "/users/floor_plan/1") return "Floor Plan"
   if (normalized.startsWith("/users/billing_display_setting")) return "Display"
   if (normalized.startsWith("/users/pos_configuration")) return "Print logo"
   if (normalized.startsWith("/users/billing_calculations")) return "Calculations"

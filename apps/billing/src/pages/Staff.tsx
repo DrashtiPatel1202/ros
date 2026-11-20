@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { api } from "../api"
 import { errText, MgmtShell } from "./mgmtUi"
 
@@ -38,12 +38,23 @@ export function StaffPage() {
   const [form, setForm] = useState(blank)
   const [error, setError] = useState("")
 
-  async function load() {
-    setRows((await api.staff()).rows)
-  }
-  useEffect(() => {
-    void load().catch((caught) => setError(errText(caught, "Could not load billing users")))
+  const load = useCallback(async () => {
+    const data = await api.staff()
+    setRows(data.rows)
+    setError("")
   }, [])
+
+  useEffect(() => {
+    let active = true
+    void load().catch((caught) => {
+      if (!active) return
+      const message = errText(caught, "Could not load billing users")
+      if (message) setError(message)
+    })
+    return () => {
+      active = false
+    }
+  }, [load])
 
   function set<K extends keyof typeof blank>(key: K, value: (typeof blank)[K]) {
     setForm((current) => ({ ...current, [key]: value }))
