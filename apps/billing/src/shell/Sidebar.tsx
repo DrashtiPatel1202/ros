@@ -81,7 +81,17 @@ function matches(leafPath: string, path: string) {
   return false
 }
 
-export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+export function Sidebar({
+  collapsed,
+  hidden = false,
+  onToggle,
+  onNavigate,
+}: {
+  collapsed: boolean
+  hidden?: boolean
+  onToggle: () => void
+  onNavigate?: () => void
+}) {
   const location = useLocation()
   const path = location.pathname.replace(/\/$/, "") || "/"
   const groups = useMemo(() => visibleGroups(SIDEBAR), [])
@@ -122,7 +132,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
   }
 
   return (
-    <aside className="sidebar sidebar-menu sidebar-new-ps">
+    <aside className="sidebar sidebar-menu sidebar-new-ps" aria-hidden={hidden} inert={hidden}>
       <div className="sidebar-brand">
         {!collapsed && <span className="sidebar-brand-name">{APP_NAME}</span>}
         <button type="button" className="header-icon-btn" onClick={onToggle} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
@@ -151,12 +161,13 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                         open={collapsed || (open[child.id] ?? false)}
                         active={activeBranch.sub === child.id}
                         activeLeaf={activeBranch.leaf}
+                        onNavigate={onNavigate}
                         onToggle={() => toggle(child.id)}
                       />
                     )
                   }
                   return (
-                    <NavItem key={child.id} leaf={child} active={activeBranch.leaf === child.id} collapsed={collapsed} />
+                    <NavItem key={child.id} leaf={child} active={activeBranch.leaf === child.id} collapsed={collapsed} onNavigate={onNavigate} />
                   )
                 })}
             </div>
@@ -173,6 +184,7 @@ function SubGroup({
   open,
   active,
   activeLeaf,
+  onNavigate,
   onToggle,
 }: {
   group: NavSubGroup
@@ -180,6 +192,7 @@ function SubGroup({
   open: boolean
   active: boolean
   activeLeaf: string
+  onNavigate?: () => void
   onToggle: () => void
 }) {
   return (
@@ -196,7 +209,7 @@ function SubGroup({
       {open &&
         !collapsed &&
         group.children.map((leaf) => (
-          <NavItem key={leaf.id} leaf={leaf} active={activeLeaf === leaf.id} collapsed={false} depth="nested" />
+          <NavItem key={leaf.id} leaf={leaf} active={activeLeaf === leaf.id} collapsed={false} depth="nested" onNavigate={onNavigate} />
         ))}
     </div>
   )
@@ -207,11 +220,13 @@ function NavItem({
   active,
   collapsed,
   depth,
+  onNavigate,
 }: {
   leaf: NavLeaf
   active: boolean
   collapsed: boolean
   depth?: "child" | "nested"
+  onNavigate?: () => void
 }) {
   const className = `nav-link-pp ${depth ?? ""} ${active ? "active" : ""}`
   const body = (
@@ -227,13 +242,13 @@ function NavItem({
   )
   if (leaf.path === "/pos/billing") {
     return (
-      <a href="/pos/billing" className={className} title={leaf.label}>
+      <a href="/pos/billing" className={className} title={leaf.label} onClick={onNavigate}>
         {body}
       </a>
     )
   }
   return (
-    <Link to={leaf.path} className={className} title={leaf.label}>
+    <Link to={leaf.path} className={className} title={leaf.label} onClick={onNavigate}>
       {body}
     </Link>
   )

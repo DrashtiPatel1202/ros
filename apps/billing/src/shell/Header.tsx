@@ -5,11 +5,15 @@ import { EXPLORE_PRODUCTS, isImplemented } from "../nav"
 
 export function Header({
   session,
+  menuOpen,
+  onToggleMenu,
   onOpenDeviceMap,
   onSignOut,
   onOutletChange,
 }: {
   session: BillingSession
+  menuOpen: boolean
+  onToggleMenu: () => void
   onOpenDeviceMap: () => void
   onSignOut: () => void
   onOutletChange: (session: BillingSession) => void
@@ -47,6 +51,15 @@ export function Header({
 
   return (
     <header className="ps-header ps-header-new navbar navbar-expand-md sticky-top navbar-light bg-light menu-div">
+      <button
+        type="button"
+        className="nav-toggle header-icon-btn"
+        aria-label={menuOpen ? "Close menu" : "Open menu"}
+        aria-expanded={menuOpen}
+        onClick={onToggleMenu}
+      >
+        <i className={`bi ${menuOpen ? "bi-x-lg" : "bi-list"}`} />
+      </button>
       <div className="outlet-switch position-relative">
         <button type="button" className="btn btn-link p-0 text-decoration-none text-dark" onClick={() => setSwitcherOpen((v) => !v)}>
           <i className="bi bi-shop me-1" />
@@ -112,7 +125,7 @@ export function Header({
         </Link>
         <div className="position-relative" ref={exploreRef}>
           <button type="button" className="btn-explore" onClick={() => setExploreOpen((v) => !v)}>
-            <i className="bi bi-compass" /> Explore Products
+            <i className="bi bi-compass" /> <span className="explore-label">Explore Products</span>
           </button>
           {exploreOpen && (
             <div className="mega-menu">
