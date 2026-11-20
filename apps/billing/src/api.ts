@@ -51,7 +51,13 @@ export type DashboardData = {
     platforms: { name: string; orders: number; prepaid: number; cod: number; revenuePaise: number }[]
   }
   items?: { name: string; qty: number; totalPaise: number }[]
-  actionCenter: { id: string; title: string; detail: string }[]
+  actionCenter: { id: string; title: string; detail: string; count: number; items: { id: number; name: string }[] }[]
+  onboarding: {
+    completed: number
+    total: number
+    steps: { id: string; label: string; done: boolean }[]
+    taxes: { id: number; title: string; rateBps: number }[]
+  }
   snapshotReady: boolean
   snapshotDate: string
   expenses: { expensePaise: number; withdrawalPaise: number; topupPaise: number }
@@ -128,6 +134,16 @@ export const api = {
     request<{ ok: true }>("/api/v1/billing/dashboard/fssai", {
       method: "POST",
       body: JSON.stringify({ fssai: value }),
+    }),
+  saveOnboardingItem: (id: number, body: { description?: string; imageUrl?: string }) =>
+    request<{ ok: true }>(`/api/v1/billing/dashboard/items/${id}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  saveItemTax: (id: number, taxId: number) =>
+    request<{ ok: true }>(`/api/v1/billing/dashboard/items/${id}/tax`, {
+      method: "POST",
+      body: JSON.stringify({ taxId }),
     }),
   dismissAction: (id: string) =>
     request<{ ok: true }>(`/api/v1/billing/dashboard/actions/${id}/dismiss`, { method: "POST" }),

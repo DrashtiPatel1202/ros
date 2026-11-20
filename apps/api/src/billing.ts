@@ -1,6 +1,10 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto"
+import { readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
+import { loadOutletSettings } from "./config.ts"
 import { pool } from "./db.ts"
 import { redis } from "./redis.ts"
 import { sendError } from "./http.ts"
@@ -91,7 +95,10 @@ async function requireBilling(request: FastifyRequest, reply: FastifyReply) {
   return session
 }
 
+const ACTION_IDS = ["missing-description", "missing-photos", "tax-config", "fssai"] as const
+
 export async function ensureBillingAdmin() {
+  await pool.query(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../sql/008_onboarding.sql"), "utf8"))
   await pool.query(`
     CREATE TABLE IF NOT EXISTS billing_admins (
       id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -293,23 +300,74 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       [session.adminId],
     )
     const dismissed = new Set(admin.rows[0]?.dismissed_actions ?? [])
+    const outlet = await pool.query<{ fssai: string }>("SELECT fssai FROM outlets WHERE id = $1", [session.outletId])
+    const gaps = await pool.query<{
+      id: string
+      name: string
+      description: string
+      image_url: string
+      has_tax: boolean
+    }>(
+      `SELECT i.id::text, i.name, i.description, i.image_url,
+              EXISTS (SELECT 1 FROM item_taxes t WHERE t.item_id = i.id) AS has_tax
+       FROM menu_items i
+       WHERE i.outlet_id = $1 AND i.is_available
+       ORDER BY i.sort_rank, i.id`,
+      [session.outletId],
+    )
+    const taxes = await pool.query<{ id: string; title: string; rate_bps: number }>(
+      `SELECT id::text, title, rate_bps FROM menu_taxes WHERE outlet_id = $1 AND is_active ORDER BY is_default DESC, title`,
+      [session.outletId],
+    )
+    const menuRows = gaps.rows
+    const missingDescription = menuRows.filter((row) => row.description.trim() === "")
+    const missingPhotos = menuRows.filter((row) => row.image_url.trim() === "")
+    const missingTax = menuRows.filter((row) => !row.has_tax)
+    const fssai = outlet.rows[0]?.fssai ?? ""
+    const preview = (items: { id: string; name: string }[]) => items.slice(0, 20).map((item) => ({ id: Number(item.id), name: item.name }))
     const actions = [
+      {
+        id: "missing-description",
+        title: "Items missing description",
+        detail: "Add description to enhance customer awareness of items on order platforms",
+        count: missingDescription.length,
+        items: preview(missingDescription),
+      },
       {
         id: "missing-photos",
         title: "Items missing photos",
-        detail: "Add photos so online channels look complete.",
-      },
-      {
-        id: "fssai",
-        title: "FSSAI Lic No.",
-        detail: "Add your FSSAI licence number for compliance.",
+        detail: "Add photos to increase the visibility of your menu on order platform.",
+        count: missingPhotos.length,
+        items: preview(missingPhotos),
       },
       {
         id: "tax-config",
         title: "Tax Configuration",
-        detail: "Some items still need tax assignment.",
+        detail: "Select the relevant tax(es) for the listed items. Applicable for all areas.",
+        count: missingTax.length,
+        items: preview(missingTax),
       },
-    ].filter((item) => !dismissed.has(item.id) && !(item.id === "fssai" && admin.rows[0]?.fssai))
+      {
+        id: "fssai",
+        title: "FSSAI Lic No.",
+        detail: "Please enter your FSSAI Lic No.",
+        count: fssai ? 0 : 1,
+        items: [],
+      },
+    ].filter((item) => !dismissed.has(item.id) && item.count > 0)
+    const steps = [
+      { id: "outlet", label: "Outlet created", done: true },
+      { id: "menu", label: "Menu items added", done: menuRows.length > 0 },
+      { id: "descriptions", label: "Item descriptions added", done: menuRows.length > 0 && missingDescription.length === 0 },
+      { id: "photos", label: "Item photos added", done: menuRows.length > 0 && missingPhotos.length === 0 },
+      { id: "fssai", label: "FSSAI licence saved", done: fssai.length === 14 },
+    ]
+    const onboarding = {
+      completed: steps.filter((step) => step.done).length,
+      total: steps.length,
+      steps,
+      taxes: taxes.rows.map((row) => ({ id: Number(row.id), title: row.title, rateBps: row.rate_bps })),
+    }
 
     const bounds = await pool.query<{ from_date: Date; to_date: Date; today: Date }>(
       `WITH b AS (SELECT (now() AT TIME ZONE $2)::date AS today)
@@ -509,6 +567,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       },
       items: items.rows.map((row) => ({ name: row.name, qty: Number(row.qty), totalPaise: Number(row.total) })),
       actionCenter: actions,
+      onboarding,
       snapshotReady: true,
       snapshotDate: new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(yesterday),
       expenses: { expensePaise: cashOf("expense"), withdrawalPaise: cashOf("withdrawal"), topupPaise: cashOf("topup") },
@@ -523,9 +582,20 @@ export async function registerBillingRoutes(app: FastifyInstance) {
   app.post("/api/v1/billing/dashboard/fssai", async (request, reply) => {
     const session = await requireBilling(request, reply)
     if (!session) return
-    const parsed = z.object({ fssai: z.string().trim().min(5).max(40) }).safeParse(request.body)
-    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Enter a valid FSSAI number")
-    await pool.query("UPDATE billing_admins SET fssai = $2 WHERE id = $1", [session.adminId, parsed.data.fssai])
+    const parsed = z.object({ fssai: z.string().trim().regex(/^[0-9]{14}$/) }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "FSSAI Lic No. must be 14 digits.")
+    try {
+      await pool.query("UPDATE outlets SET fssai = $2 WHERE id = $1", [session.outletId, parsed.data.fssai])
+      const settings = await loadOutletSettings(session.outletId)
+      settings.outlet.fssai = parsed.data.fssai
+      await pool.query(
+        `INSERT INTO outlet_settings (outlet_id, document) VALUES ($1, $2::jsonb)
+         ON CONFLICT (outlet_id) DO UPDATE SET document = $2::jsonb, updated_at = now()`,
+        [session.outletId, JSON.stringify(settings)],
+      )
+    } catch {
+      return sendError(reply, 400, "VALIDATION", "FSSAI Lic No. must be 14 digits.")
+    }
     return { ok: true }
   })
 
@@ -533,12 +603,69 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     const session = await requireBilling(request, reply)
     if (!session) return
     const id = (request.params as { id: string }).id
+    if (!ACTION_IDS.includes(id as (typeof ACTION_IDS)[number])) {
+      return sendError(reply, 400, "VALIDATION", "Unknown onboarding step.")
+    }
     await pool.query(
       `UPDATE billing_admins
        SET dismissed_actions = array(SELECT DISTINCT unnest(dismissed_actions || $2::text[]))
        WHERE id = $1`,
       [session.adminId, [id]],
     )
+    return { ok: true }
+  })
+
+  app.post("/api/v1/billing/dashboard/items/:id", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const id = Number((request.params as { id: string }).id)
+    const parsed = z
+      .object({
+        description: z.string().trim().min(1).max(500).optional(),
+        imageUrl: z.string().trim().regex(/^https:\/\/\S+$/).max(500).optional(),
+      })
+      .refine((body) => body.description || body.imageUrl, { message: "Add a description or photo." })
+      .safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Description must be 1–500 characters, and a photo must be an https URL.")
+    try {
+      const updated = await pool.query(
+        `UPDATE menu_items SET
+           description = COALESCE($3, description),
+           image_url = COALESCE($4, image_url)
+         WHERE id = $1 AND outlet_id = $2`,
+        [id, session.outletId, parsed.data.description ?? null, parsed.data.imageUrl ?? null],
+      )
+      if (!updated.rowCount) return sendError(reply, 404, "NOT_FOUND", "Item not found.")
+    } catch {
+      return sendError(reply, 400, "VALIDATION", "That description or photo does not meet the rules.")
+    }
+    return { ok: true }
+  })
+
+  app.post("/api/v1/billing/dashboard/items/:id/tax", async (request, reply) => {
+    const session = await requireBilling(request, reply)
+    if (!session) return
+    const id = Number((request.params as { id: string }).id)
+    const parsed = z.object({ taxId: z.number().int().positive() }).safeParse(request.body)
+    if (!parsed.success) return sendError(reply, 400, "VALIDATION", "Pick a tax.")
+    const inserted = await pool.query(
+      `INSERT INTO item_taxes (item_id, tax_id)
+       SELECT i.id, t.id
+       FROM menu_items i
+       JOIN menu_taxes t ON t.id = $3 AND t.outlet_id = i.outlet_id
+       WHERE i.id = $1 AND i.outlet_id = $2
+       ON CONFLICT DO NOTHING`,
+      [id, session.outletId, parsed.data.taxId],
+    )
+    if (!inserted.rowCount) {
+      const exists = await pool.query(
+        `SELECT 1 FROM item_taxes it
+         JOIN menu_items i ON i.id = it.item_id
+         WHERE i.id = $1 AND i.outlet_id = $2 AND it.tax_id = $3`,
+        [id, session.outletId, parsed.data.taxId],
+      )
+      if (!exists.rowCount) return sendError(reply, 400, "VALIDATION", "Item and tax must belong to this outlet.")
+    }
     return { ok: true }
   })
 }

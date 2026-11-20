@@ -19,8 +19,11 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [chartType, setChartType] = useState<"column" | "area" | "line">("column")
   const [actionOpen, setActionOpen] = useState(false)
-  const [fssaiOpen, setFssaiOpen] = useState(false)
+  const [activeAction, setActiveAction] = useState<string | null>(null)
   const [fssai, setFssai] = useState("")
+  const [drafts, setDrafts] = useState<Record<number, string>>({})
+  const [taxId, setTaxId] = useState<number | "">("")
+  const [formError, setFormError] = useState("")
   const [itemMode, setItemMode] = useState<"top" | "low">("top")
 
   async function load() {
@@ -75,6 +78,32 @@ export function Dashboard() {
           {data && data.actionCenter.length > 0 && <span className="bubble">{data.actionCenter.length}</span>}
         </button>
       </div>
+
+      {data && data.onboarding.completed < data.onboarding.total && (
+        <div className="pp-card onboarding-card">
+          <h3>Onboarding Progress</h3>
+          <p className="text-muted mb-2">Complete the remaining steps to fully set up your account and start using all features.</p>
+          <div className="text-end small mb-1">
+            {data.onboarding.completed}/{data.onboarding.total} steps completed
+          </div>
+          <div className="onboarding-progress mb-3" role="progressbar" aria-valuenow={data.onboarding.completed} aria-valuemax={data.onboarding.total}>
+            <div className="done" style={{ width: `${(data.onboarding.completed / data.onboarding.total) * 100}%` }} />
+            <div className="left" style={{ width: `${((data.onboarding.total - data.onboarding.completed) / data.onboarding.total) * 100}%` }} />
+          </div>
+          <ul className="onboarding-steps mb-3">
+            {data.onboarding.steps.map((step) => (
+              <li key={step.id} className={step.done ? "done" : ""}>
+                {step.done ? "Done" : "Left"} · {step.label}
+              </li>
+            ))}
+          </ul>
+          <div className="text-end">
+            <button type="button" className="btn btn-link" onClick={() => setActionOpen(true)}>
+              Complete setup
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="pp-card">
         <div className="card-toolbar">
@@ -275,15 +304,14 @@ export function Dashboard() {
             <div className="drawer-body">
               {data.actionCenter.length === 0 && <div className="empty-soft">You&apos;re all caught up</div>}
               {data.actionCenter.map((item) => (
-                <div key={item.id} className="border rounded p-3 mb-2">
-                  <div className="fw-semibold">{item.title}</div>
-                  <div className="text-muted small mb-2">{item.detail}</div>
-                  <div className="d-flex gap-2">
-                    {item.id === "fssai" && (
-                      <button type="button" className="btn btn-sm btn-primary" onClick={() => setFssaiOpen(true)}>
-                        Fix
-                      </button>
-                    )}
+                <div key={item.id} className="border rounded p-3 mb-2 d-flex justify-content-between gap-3">
+                  <div>
+                    <div className="fw-semibold">{item.title}</div>
+                    <div className="text-muted small">
+                      <span className="text-primary fw-semibold">{item.count}</span> {item.detail}
+                    </div>
+                  </div>
+                  <div className="d-flex gap-2 align-items-start">
                     <button
                       type="button"
                       className="btn btn-sm btn-outline-secondary"
@@ -292,7 +320,17 @@ export function Dashboard() {
                         await load()
                       }}
                     >
-                      Ignore now
+                      {item.id === "tax-config" || item.id === "fssai" ? "Ignore now" : "Clear"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-primary"
+                      onClick={() => {
+                        setFormError("")
+                        setActiveAction(item.id)
+                      }}
+                    >
+                      {item.id === "fssai" ? "Add" : "View Item"}
                     </button>
                   </div>
                 </div>
@@ -302,28 +340,95 @@ export function Dashboard() {
         </>
       )}
 
-      {fssaiOpen && (
+      {activeAction && data && (
         <div className="modal-pp-backdrop">
-          <div className="modal-pp">
+          <div className="modal-pp" style={{ width: 560 }}>
             <div className="modal-pp-header">
-              <span>FSSAI Lic No.</span>
-              <button type="button" className="btn-close" onClick={() => setFssaiOpen(false)} />
+              <span>
+                {activeAction === "fssai"
+                  ? "FSSAI Lic No."
+                  : activeAction === "tax-config"
+                    ? "Tax Configuration"
+                    : activeAction === "missing-photos"
+                      ? "Upload Item Image"
+                      : "Item Description"}
+              </span>
+              <button type="button" className="btn-close" onClick={() => setActiveAction(null)} />
             </div>
             <div className="modal-pp-body">
-              <label className="form-label">FSSAI Lic No.</label>
-              <input className="form-control" value={fssai} onChange={(e) => setFssai(e.target.value)} />
+              {activeAction === "fssai" ? (
+                <>
+                  <label className="form-label">Please enter your FSSAI Lic No.</label>
+                  <input className="form-control" placeholder="FSSAI Lic No." value={fssai} onChange={(e) => setFssai(e.target.value)} />
+                </>
+              ) : (
+                <>
+                  <p className="text-muted small">
+                    {activeAction === "tax-config"
+                      ? "Select the relevant tax for the listed items. Applicable for all areas."
+                      : activeAction === "missing-photos"
+                        ? "Add an https photo URL for each item."
+                        : "Add descriptions of the listed items to enhance customer awareness on ordering platforms."}
+                  </p>
+                  {activeAction === "tax-config" && (
+                    <select className="form-select mb-3" value={taxId} onChange={(e) => setTaxId(e.target.value ? Number(e.target.value) : "")}>
+                      <option value="">Select tax</option>
+                      {data.onboarding.taxes.map((tax) => (
+                        <option key={tax.id} value={tax.id}>
+                          {tax.title} ({(tax.rateBps / 100).toFixed(2)}%)
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {(data.actionCenter.find((item) => item.id === activeAction)?.items ?? []).map((item) => (
+                    <div key={item.id} className="d-flex gap-2 align-items-center mb-2">
+                      <div className="flex-grow-1">{item.name}</div>
+                      {activeAction !== "tax-config" && (
+                        <input
+                          className="form-control"
+                          style={{ maxWidth: 280 }}
+                          placeholder={activeAction === "missing-photos" ? "https://…" : "Description"}
+                          value={drafts[item.id] ?? ""}
+                          onChange={(e) => setDrafts((current) => ({ ...current, [item.id]: e.target.value }))}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </>
+              )}
+              {formError && <div className="text-danger small mt-2">{formError}</div>}
             </div>
             <div className="modal-pp-footer">
-              <button type="button" className="btn btn-outline-secondary" onClick={() => setFssaiOpen(false)}>
+              <button type="button" className="btn btn-outline-secondary" onClick={() => setActiveAction(null)}>
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn btn-primary"
                 onClick={async () => {
-                  await api.saveFssai(fssai)
-                  setFssaiOpen(false)
-                  await load()
+                  setFormError("")
+                  try {
+                    if (activeAction === "fssai") await api.saveFssai(fssai)
+                    else {
+                      const items = data.actionCenter.find((item) => item.id === activeAction)?.items ?? []
+                      for (const item of items) {
+                        if (activeAction === "tax-config") {
+                          if (taxId === "") throw new ApiError(400, "VALIDATION", "Pick a tax.")
+                          await api.saveItemTax(item.id, taxId)
+                        } else if (activeAction === "missing-photos") {
+                          const imageUrl = (drafts[item.id] ?? "").trim()
+                          if (imageUrl) await api.saveOnboardingItem(item.id, { imageUrl })
+                        } else {
+                          const description = (drafts[item.id] ?? "").trim()
+                          if (description) await api.saveOnboardingItem(item.id, { description })
+                        }
+                      }
+                    }
+                    setActiveAction(null)
+                    await load()
+                  } catch (caught) {
+                    setFormError(caught instanceof ApiError ? caught.message : "Could not save.")
+                  }
                 }}
               >
                 Save

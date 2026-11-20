@@ -358,6 +358,13 @@ a:hover { text-decoration: underline; }
   font-weight: 600;
   position: relative;
 }
+.onboarding-card h3 { margin: 0; font-size: 16px; }
+.onboarding-progress { height: 8px; background: #e7edf5; border-radius: 99px; overflow: hidden; display: flex; }
+.onboarding-progress .done { background: #2f6fed; }
+.onboarding-progress .left { background: #d7e3f8; }
+.onboarding-steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.onboarding-steps li { font-size: 12px; padding: 4px 8px; border-radius: 99px; background: #f3f5f8; }
+.onboarding-steps li.done { background: #e8f6ee; color: #146c43; }
 .action-center-btn .bubble {
   position: absolute; top: -6px; right: -6px;
   background: var(--pp-danger); color: #fff;
